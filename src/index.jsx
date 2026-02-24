@@ -11,7 +11,7 @@ const FRIENDS = [
     wzrost: "niski",
     region: "biedrusko",
     kortyzol: "niski",
-    rokUrodzenia: "2009",
+    rokUrodzenia: "2010",
   },
   {
     name: "barwice",
