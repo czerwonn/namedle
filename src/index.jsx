@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 
+const BASE = import.meta.env.BASE_URL;
+
 const FRIENDS = [
   {
     name: "axesi",
@@ -173,7 +175,7 @@ const FRIENDS = [
     kortyzol: "niski",
     rokUrodzenia: "2007",
   },
-];
+].map(f => ({ ...f, image: `${BASE}${f.image.slice(1)}` }));
 
 const CATEGORIES = [
   { key: "skill", label: "Skill" },
@@ -237,7 +239,7 @@ export default function Namedle() {
   }, [guesses, won, mode]);
 
   function playWin() {
-    new Audio("/win.mp3").play();
+    new Audio(`${BASE}win.mp3`).play();
   }
 
   function pick(friend) {
@@ -293,7 +295,7 @@ export default function Namedle() {
       `}</style>
 
       <div style={{ display: "flex", alignItems: "center", gap: "6px", margin: "0 0 4px" }}>
-        <img src="/zdjecia/noname.png" alt="name" style={{ height: "clamp(32px, 7vw, 48px)", display: "block" }} />
+        <img src={`${BASE}zdjecia/noname.png`} alt="name" style={{ height: "clamp(32px, 7vw, 48px)", display: "block" }} />
         <h1 style={{
           fontSize: "clamp(32px, 7vw, 48px)", fontWeight: 900, margin: 0,
           letterSpacing: "-1.5px", lineHeight: 1, color: "#fff",
