@@ -3,6 +3,45 @@ import { createRoot } from "react-dom/client";
 
 const BASE = import.meta.env.BASE_URL;
 
+// ─── Patch notes ────────────────────────────────────────────────────────────
+// Dodaj nowy wpis na POCZĄTKU tablicy żeby pojawił się na górze listy.
+const PATCH_NOTES = [
+    {
+    version: "1.2",
+    date: "25.02.2026",
+    changes: [
+      "Dodano najpopularniejsze ksywki z serwera kropka",
+      "Dodano wsparcie dla entera"
+    ],
+  },
+  {
+    version: "1.1",
+    date: "25.02.2026",
+    changes: [
+      "Dodano przycisk z patch notesami",
+      "Zaaktualizowano dane o osobach",
+      "Małe poprawki w kodzie"
+    ],
+  },
+  {
+    version: "1.01",
+    date: "24.02.2026",
+    changes: [
+      "Zmiany w danych o osobach",
+      "Dodano tekst o przyszłych aktualizacjach",
+    ],
+  },
+  {
+    version: "1.0",
+    date: "24.02.2026",
+    changes: [
+      "Pierwsze wydanie Namedle!",
+      "Tryb codzienny i nieskończony",
+      "19 osób w bazie",
+    ],
+  },
+];
+
 const FRIENDS = [
   {
     name: "axesi",
@@ -74,7 +113,7 @@ const FRIENDS = [
     wzrost: "sredni",
     region: "czestochowa",
     kortyzol: "sredni",
-    rokUrodzenia: "2006",
+    rokUrodzenia: "2005",
   },
   {
     name: "gierzek",
@@ -107,7 +146,7 @@ const FRIENDS = [
     name: "kebcio",
     image: "/zdjecia/kebcio.png",
     skill: "goated",
-    wzrost: "wysoki",
+    wzrost: "sredni",
     region: "poznan",
     kortyzol: "niski",
     rokUrodzenia: "2007",
@@ -175,6 +214,70 @@ const FRIENDS = [
     kortyzol: "niski",
     rokUrodzenia: "2007",
   },
+  {
+    name: "stelerek",
+    image: "/zdjecia/stelerek.png",
+    skill: "mid",
+    wzrost: "wysoki",
+    region: "gdansk",
+    kortyzol: "wysoki",
+    rokUrodzenia: "2006",
+  },
+  {
+    name: "graceusz",
+    image: "/zdjecia/graceusz.png",
+    skill: "ass",
+    wzrost: "sredni",
+    region: "kassel",
+    kortyzol: "niski",
+    rokUrodzenia: "2006",
+  },
+  {
+    name: "mrkacper",
+    image: "/zdjecia/mrkacper.png",
+    skill: "mid",
+    wzrost: "wysoki",
+    region: "warszawa",
+    kortyzol: "niski",
+    rokUrodzenia: "2006",
+  },
+  {
+    name: "demogames",
+    image: "/zdjecia/demogames.gif",
+    skill: "mid",
+    wzrost: "sredni",
+    region: "wadowice",
+    kortyzol: "niski",
+    rokUrodzenia: "2003",
+  },
+  {
+    name: "gandalf",
+    image: "/zdjecia/gandalf.png",
+    skill: "mid",
+    wzrost: "sredni",
+    region: "tczew",
+    kortyzol: "sredni",
+    rokUrodzenia: "2005",
+  },
+  {
+    name: "neira",
+    image: "/zdjecia/neira.png",
+    skill: "ass",
+    wzrost: "niski",
+    region: "krakow",
+    kortyzol: "wysoki",
+    rokUrodzenia: "2006",
+  },
+  {
+    name: "koko",
+    image: "/zdjecia/koko.png",
+    skill: "ass",
+    wzrost: "wysoki",
+    region: "stargard",
+    kortyzol: "niski",
+    rokUrodzenia: "2009",
+  },
+
 ].map(f => ({ ...f, image: `${BASE}${f.image.slice(1)}` }));
 
 const CATEGORIES = [
@@ -216,6 +319,7 @@ export default function Namedle() {
   const [won, setWon] = useState(() => loadDaily().won);
   const [filter, setFilter] = useState("");
   const [showDrop, setShowDrop] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   const dropRef = useRef(null);
   const dailySave = useRef({ guesses: [], won: false });
 
@@ -302,8 +406,11 @@ export default function Namedle() {
           transform: "translateY(-4px)",
         }}>DLE</h1>
       </div>
-      <p style={{ color: "#555", fontSize: "13px", margin: "0 0 16px" }}>
+      <p style={{ color: "#555", fontSize: "13px", margin: "0 0 4px" }}>
         Zgaduj zgadula.
+      </p>
+      <p style={{ color: "#444", fontSize: "11px", margin: "0 0 16px", fontStyle: "italic" }}>
+        Z czasem coraz więcej osób zostanie dodanych.
       </p>
 
       {/* Mode */}
@@ -320,6 +427,7 @@ export default function Namedle() {
             value={filter}
             onChange={(e) => { setFilter(e.target.value); setShowDrop(true); }}
             onFocus={() => setShowDrop(true)}
+            onKeyDown={(e) => { if (e.key === "Enter" && filtered.length > 0) pick(filtered[0]); }}
             style={{
               width: "100%", padding: "12px 16px", background: "#131318",
               border: "1px solid #222", borderRadius: "10px", color: "#ddd",
@@ -408,6 +516,66 @@ export default function Namedle() {
         position: "fixed", bottom: "12px", left: "14px",
         fontSize: "12px", color: "#fff", pointerEvents: "none",
       }}>made by czerwony :&gt;</div>
+
+      {/* Patch notes button */}
+      <button
+        onClick={() => setShowNotes(true)}
+        title="Patch notes"
+        style={{
+          position: "fixed", top: "14px", right: "14px",
+          background: "#161620", border: "1px solid #2a2a3a",
+          borderRadius: "8px", padding: "6px 10px", fontSize: "16px",
+          cursor: "pointer", lineHeight: 1, color: "#fff",
+          transition: "background 0.15s",
+        }}
+        onMouseEnter={e => e.currentTarget.style.background = "#1e1e2e"}
+        onMouseLeave={e => e.currentTarget.style.background = "#161620"}
+      >📃</button>
+
+      {/* Patch notes panel */}
+      {showNotes && (
+        <>
+          <div
+            onClick={() => setShowNotes(false)}
+            style={{
+              position: "fixed", inset: 0, background: "#00000066", zIndex: 50,
+            }}
+          />
+          <div style={{
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(320px, 90vw)",
+            background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
+            zIndex: 51, overflowY: "auto", padding: "24px 20px",
+            display: "flex", flexDirection: "column", gap: "24px",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "#c4b5fd" }}>Patch Notes</h2>
+              <button
+                onClick={() => setShowNotes(false)}
+                style={{
+                  background: "none", border: "none", color: "#555",
+                  fontSize: "20px", cursor: "pointer", lineHeight: 1, padding: 0,
+                }}
+              >✕</button>
+            </div>
+            {PATCH_NOTES.map((entry, idx) => (
+              <div key={entry.version}>
+                {idx > 0 && (
+                  <div style={{ height: "1px", background: "#1a1a2a", marginBottom: "24px" }} />
+                )}
+                <div style={{ display: "flex", gap: "8px", alignItems: "baseline", marginBottom: "8px" }}>
+                  <span style={{ fontWeight: 700, fontSize: "13px", color: "#fff" }}>v{entry.version}</span>
+                  <span style={{ fontSize: "11px", color: "#444" }}>{entry.date}</span>
+                </div>
+                <ul style={{ margin: 0, paddingLeft: "18px", display: "flex", flexDirection: "column", gap: "4px" }}>
+                  {entry.changes.map((c, i) => (
+                    <li key={i} style={{ fontSize: "13px", color: "#888", lineHeight: 1.5 }}>{c}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
