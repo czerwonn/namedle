@@ -6,6 +6,14 @@ const BASE = import.meta.env.BASE_URL;
 // ─── Patch notes ────────────────────────────────────────────────────────────
 // Dodaj nowy wpis na POCZĄTKU tablicy żeby pojawił się na górze listy.
 const PATCH_NOTES = [
+  {
+    version: "1.3",
+    date: "26.02.2026",
+    changes: [
+      "Dodano licznik wygranych",
+      "Dodano informację o pozycji osoby po rozwiązaniu namedle",
+    ],
+  },
     {
     version: "1.2",
     date: "25.02.2026",
@@ -304,6 +312,27 @@ function getTodayKey() {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
+function loadStats() {
+  try {
+    const s = JSON.parse(localStorage.getItem("namedle_stats"));
+    if (s) return s;
+  } catch {}
+  return { totalWins: 0, todayDate: "", todayWins: 0 };
+}
+
+function recordWin() {
+  const stats = loadStats();
+  const today = getTodayKey();
+  if (stats.todayDate !== today) {
+    stats.todayDate = today;
+    stats.todayWins = 0;
+  }
+  stats.totalWins++;
+  stats.todayWins++;
+  localStorage.setItem("namedle_stats", JSON.stringify(stats));
+  return stats;
+}
+
 function loadDaily() {
   try {
     const s = JSON.parse(localStorage.getItem("namedle_daily"));
@@ -320,6 +349,15 @@ export default function Namedle() {
   const [filter, setFilter] = useState("");
   const [showDrop, setShowDrop] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  const [totalWins, setTotalWins] = useState(() => loadStats().totalWins);
+  const [winPosition, setWinPosition] = useState(() => {
+    const saved = loadDaily();
+    if (saved.won) {
+      const stats = loadStats();
+      if (stats.todayDate === getTodayKey()) return stats.todayWins;
+    }
+    return 0;
+  });
   const dropRef = useRef(null);
   const dailySave = useRef({ guesses: [], won: false });
 
@@ -350,7 +388,13 @@ export default function Namedle() {
     setGuesses((prev) => [...prev, friend]);
     setFilter("");
     setShowDrop(false);
-    if (friend.name === answer.name) { setWon(true); playWin(); }
+    if (friend.name === answer.name) {
+      setWon(true);
+      playWin();
+      const stats = recordWin();
+      setTotalWins(stats.totalWins);
+      setWinPosition(stats.todayWins);
+    }
   }
 
   function nextRound() {
@@ -498,10 +542,15 @@ export default function Namedle() {
         <div style={{ textAlign: "center", marginTop: "28px", animation: "pop 0.4s ease" }}>
           <div style={{ fontSize: "40px", marginBottom: "8px" }}>🎉</div>
           <div style={{ fontSize: "20px", fontWeight: 800, color: "#22c55e", marginBottom: "4px" }}>Brawo!</div>
-          <p style={{ color: "#666", fontSize: "13px", margin: "0 0 16px" }}>
+          <p style={{ color: "#666", fontSize: "13px", margin: "0 0 8px" }}>
             To był <strong style={{ color: "#c4b5fd" }}>{answer.name}</strong> - {guesses.length}{" "}
             {guesses.length === 1 ? "próba" : guesses.length < 5 ? "próby" : "prób"}
           </p>
+          {winPosition > 0 && (
+            <p style={{ color: "#888", fontSize: "12px", margin: "0 0 16px" }}>
+              Jesteś <strong style={{ color: "#facc15" }}>{winPosition}.</strong> osobą, która dzisiaj rozwiązała namedle!
+            </p>
+          )}
           {mode === "infinite" && (
             <button onClick={nextRound} className="btn btn-on">Następny →</button>
           )}
@@ -512,6 +561,10 @@ export default function Namedle() {
         Próby: {guesses.length}
       </div>
 
+      <div style={{
+        position: "fixed", bottom: "28px", left: "14px",
+        fontSize: "11px", color: "#555", pointerEvents: "none",
+      }}>wygrane: {totalWins}</div>
       <div style={{
         position: "fixed", bottom: "12px", left: "14px",
         fontSize: "12px", color: "#fff", pointerEvents: "none",
