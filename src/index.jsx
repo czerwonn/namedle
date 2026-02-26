@@ -15,6 +15,13 @@ const ADMIN_DISCORD_ID = "442046464290586654";
 
 const PATCH_NOTES = [
   {
+    version: "1.51",
+    date: "26.02.2026",
+    changes: [
+      "Wyświetlanie dziennej passy pod przyciskami trybu",
+    ],
+  },
+  {
     version: "1.5",
     date: "26.02.2026",
     changes: [
@@ -193,11 +200,12 @@ export default function Namedle() {
 
       setDiscordUser(user);
 
-      const [friendsList, wins] = await Promise.all([getAllFriends(), getGlobalWins()]);
+      const [friendsList, wins, stats] = await Promise.all([getAllFriends(), getGlobalWins(), getUserStats(user.id)]);
       setFriends(friendsList);
       setFriendsLoaded(true);
       setGlobalWins(wins);
       localStorage.setItem("namedle_global_cache", wins);
+      if (stats) setUserStats(stats);
       setAuthState("ready");
     }
     init();
@@ -243,7 +251,7 @@ export default function Namedle() {
       playWin();
       const dateKey = getTodayKey();
       const isDaily = mode === "daily";
-      recordWinFB(dateKey, isDaily, discordUser).then((res) => {
+      recordWinFB(dateKey, isDaily, discordUser).then(async (res) => {
         if (res.globalWins > 0) {
           setGlobalWins(res.globalWins);
           localStorage.setItem("namedle_global_cache", res.globalWins);
@@ -251,6 +259,10 @@ export default function Namedle() {
         if (isDaily && res.dailyPosition > 0) {
           setWinPosition(res.dailyPosition);
           localStorage.setItem("namedle_daily_position", JSON.stringify({ date: dateKey, position: res.dailyPosition }));
+        }
+        if (discordUser) {
+          const stats = await getUserStats(discordUser.id);
+          if (stats) setUserStats(stats);
         }
       });
     }
@@ -481,10 +493,17 @@ export default function Namedle() {
         Z czasem coraz więcej osób zostanie dodanych.
       </p>
 
-      <div style={{ display: "flex", gap: "6px", marginBottom: "24px" }}>
+      <div style={{ display: "flex", gap: "6px", marginBottom: mode === "daily" ? "8px" : "24px" }}>
         <button className={`btn ${mode === "daily" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("daily")}>Codzienny</button>
         <button className={`btn ${mode === "infinite" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("infinite")}>Nieskończony</button>
       </div>
+
+      {mode === "daily" && (
+        <div style={{ textAlign: "center", marginBottom: "16px", fontSize: "12px", color: "#888" }}>
+          <div>Twoja dzienna passa: <strong style={{ color: "#c4b5fd" }}>{userStats ? userStats.dailyStreak : 0}</strong></div>
+          <div>Twoja najdłuższa dzienna passa: <strong style={{ color: "#c4b5fd" }}>{userStats ? userStats.maxDailyStreak : 0}</strong></div>
+        </div>
+      )}
 
       {!won && (
         <div ref={dropRef} style={{ position: "relative", width: "100%", maxWidth: "340px", marginBottom: "24px", zIndex: 10 }}>
