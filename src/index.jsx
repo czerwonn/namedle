@@ -173,7 +173,7 @@ export default function Namedle() {
   const [adminSubmitting, setAdminSubmitting] = useState(false);
 
   const dropRef = useRef(null);
-  const dailySave = useRef({ guesses: [], won: false });
+  const dailySave = useRef({ guesses: [], won: false, date: getTodayKey() });
 
   const guessedNames = guesses.map((g) => g.name);
   const filtered = friends
@@ -212,10 +212,19 @@ export default function Namedle() {
   }, []);
 
   useEffect(() => {
-    if (friendsLoaded && friends.length > 0 && !answer) {
-      setAnswer(getDailyFriend(friends));
+    if (friendsLoaded && friends.length > 0) {
+      const dailyFriend = getDailyFriend(friends);
+      if (!answer) setAnswer(dailyFriend);
+      if (mode === "daily" && won && dailyFriend) {
+        const hasCorrectGuess = guesses.some((g) => g.name === dailyFriend.name);
+        if (!hasCorrectGuess) {
+          setGuesses([]);
+          setWon(false);
+          setWinPosition(0);
+        }
+      }
     }
-  }, [friendsLoaded, friends, answer]);
+  }, [friendsLoaded, friends]);
 
   useEffect(() => {
     const h = (e) => {
@@ -224,6 +233,26 @@ export default function Namedle() {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  useEffect(() => {
+    let lastDate = getTodayKey();
+    function checkDateChange() {
+      if (document.visibilityState !== "visible") return;
+      const today = getTodayKey();
+      if (today !== lastDate) {
+        lastDate = today;
+        if (mode === "daily") {
+          setGuesses([]);
+          setWon(false);
+          setWinPosition(0);
+          if (friends.length > 0) setAnswer(getDailyFriend(friends));
+        }
+        dailySave.current = { guesses: [], won: false, date: today };
+      }
+    }
+    document.addEventListener("visibilitychange", checkDateChange);
+    return () => document.removeEventListener("visibilitychange", checkDateChange);
+  }, [mode, friends]);
 
   useEffect(() => {
     if (mode === "daily") {
@@ -277,12 +306,19 @@ export default function Namedle() {
 
   function switchMode(m) {
     if (m === mode) return;
-    if (mode === "daily") dailySave.current = { guesses, won };
+    if (mode === "daily") dailySave.current = { guesses, won, date: getTodayKey() };
     setMode(m);
     setFilter("");
     if (m === "daily") {
-      setGuesses(dailySave.current.guesses);
-      setWon(dailySave.current.won);
+      const today = getTodayKey();
+      if (dailySave.current.date === today) {
+        setGuesses(dailySave.current.guesses);
+        setWon(dailySave.current.won);
+      } else {
+        setGuesses([]);
+        setWon(false);
+        setWinPosition(0);
+      }
       setAnswer(getDailyFriend(friends));
     } else {
       setGuesses([]);
