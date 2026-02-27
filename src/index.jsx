@@ -14,6 +14,13 @@ const BASE = import.meta.env.BASE_URL;
 const ADMIN_DISCORD_ID = "442046464290586654";
 
 const PATCH_NOTES = [
+    {
+    version: "1.52",
+    date: "27.02.2026",
+    changes: [
+      "Naprawiono błąd z zapisywaniem karty po północy (jeśli ktoś miał otwartą kartę do po północy (np. 23:59->00:00), to gra się psuła.",
+    ],
+  },
   {
     version: "1.51",
     date: "26.02.2026",
