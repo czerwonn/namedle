@@ -48,9 +48,10 @@ export async function getDailyPlayerCount(dateKey) {
   }
 }
 
-export async function recordWin(dateKey, isDaily, discordUser) {
+export async function recordWin(dateKey, mode, discordUser) {
   if (!db) return { globalWins: 0, dailyPosition: 0 };
   const result = { globalWins: 0, dailyPosition: 0 };
+  const isDaily = mode === "daily" || mode === "dailyQuote";
 
   try {
     const gTx = await runTransaction(ref(db, "globalWins"), (v) => (v || 0) + 1);
@@ -65,22 +66,28 @@ export async function recordWin(dateKey, isDaily, discordUser) {
       await runTransaction(ref(db, `leaderboard/${discordUser.id}`), (cur) => {
         const existing = cur || {};
         const totalWins = (existing.wins || 0) + 1;
-        const infiniteWins = (existing.infiniteWins || 0) + (isDaily ? 0 : 1);
+        const infiniteWins = (existing.infiniteWins || 0) + (mode === "infinite" ? 1 : 0);
+        const quoteInfiniteWins = (existing.quoteInfiniteWins || 0) + (mode === "infiniteQuote" ? 1 : 0);
 
         let dailyStreak = existing.dailyStreak || 0;
         let maxDailyStreak = existing.maxDailyStreak || 0;
-        let lastDailyWinDate = existing.lastDailyWinDate || null;
+        let lastClassicDailyWinDate = existing.lastClassicDailyWinDate || existing.lastDailyWinDate || null;
+        let lastQuoteDailyWinDate = existing.lastQuoteDailyWinDate || null;
+        let lastFullDailyDate = existing.lastFullDailyDate || null;
 
-        if (isDaily) {
-          if (lastDailyWinDate === dateKey) {
-            // already won today
-          } else if (lastDailyWinDate === getYesterdayKey(dateKey)) {
-            dailyStreak = dailyStreak + 1;
-          } else {
-            dailyStreak = 1;
+        if (mode === "daily") lastClassicDailyWinDate = dateKey;
+        if (mode === "dailyQuote") lastQuoteDailyWinDate = dateKey;
+
+        if (lastClassicDailyWinDate === dateKey && lastQuoteDailyWinDate === dateKey) {
+          if (lastFullDailyDate !== dateKey) {
+            if (lastFullDailyDate === getYesterdayKey(dateKey)) {
+              dailyStreak = dailyStreak + 1;
+            } else {
+              dailyStreak = 1;
+            }
+            if (dailyStreak > maxDailyStreak) maxDailyStreak = dailyStreak;
+            lastFullDailyDate = dateKey;
           }
-          if (dailyStreak > maxDailyStreak) maxDailyStreak = dailyStreak;
-          lastDailyWinDate = dateKey;
         }
 
         return {
@@ -88,9 +95,12 @@ export async function recordWin(dateKey, isDaily, discordUser) {
           avatar: discordUser.avatar,
           wins: totalWins,
           infiniteWins,
+          quoteInfiniteWins,
           dailyStreak,
           maxDailyStreak,
-          lastDailyWinDate,
+          lastClassicDailyWinDate,
+          lastQuoteDailyWinDate,
+          lastFullDailyDate,
         };
       });
     }
@@ -113,6 +123,7 @@ export async function getLeaderboard(sortBy = "wins") {
         avatar: v.avatar,
         wins: v.wins || 0,
         infiniteWins: v.infiniteWins || 0,
+        quoteInfiniteWins: v.quoteInfiniteWins || 0,
         dailyStreak: v.dailyStreak || 0,
         maxDailyStreak: v.maxDailyStreak || 0,
       }))
@@ -131,8 +142,11 @@ export async function getUserStats(discordId) {
     return {
       wins: v.wins || 0,
       infiniteWins: v.infiniteWins || 0,
+      quoteInfiniteWins: v.quoteInfiniteWins || 0,
       dailyStreak: v.dailyStreak || 0,
       maxDailyStreak: v.maxDailyStreak || 0,
+      lastClassicDailyWinDate: v.lastClassicDailyWinDate || v.lastDailyWinDate || null,
+      lastQuoteDailyWinDate: v.lastQuoteDailyWinDate || null,
     };
   } catch {
     return null;
@@ -179,6 +193,86 @@ export async function deleteFriend(id) {
     return true;
   } catch (e) {
     console.error("deleteFriend error:", e);
+    return false;
+  }
+}
+
+export async function getAllQuotes() {
+  if (!db) return [];
+  try {
+    const snap = await get(ref(db, "quotes"));
+    const data = snap.val() || {};
+    return Object.entries(data).map(([id, v]) => ({ id, ...v }));
+  } catch {
+    return [];
+  }
+}
+
+export async function addQuote(data) {
+  if (!db) return false;
+  try {
+    await set(push(ref(db, "quotes")), data);
+    return true;
+  } catch (e) {
+    console.error("addQuote error:", e);
+    return false;
+  }
+}
+
+export async function updateQuote(id, data) {
+  if (!db) return false;
+  try {
+    await set(ref(db, `quotes/${id}`), data);
+    return true;
+  } catch (e) {
+    console.error("updateQuote error:", e);
+    return false;
+  }
+}
+
+export async function deleteQuote(id) {
+  if (!db) return false;
+  try {
+    await remove(ref(db, `quotes/${id}`));
+    return true;
+  } catch (e) {
+    console.error("deleteQuote error:", e);
+    return false;
+  }
+}
+
+export async function getProposals(statusFilter = "pending") {
+  if (!db) return [];
+  try {
+    const snap = await get(ref(db, "proposals"));
+    const data = snap.val() || {};
+    return Object.entries(data)
+      .map(([id, v]) => ({ id, ...v }))
+      .filter((p) => p.status === statusFilter)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  } catch {
+    return [];
+  }
+}
+
+export async function addProposal(data) {
+  if (!db) return false;
+  try {
+    await set(push(ref(db, "proposals")), data);
+    return true;
+  } catch (e) {
+    console.error("addProposal error:", e);
+    return false;
+  }
+}
+
+export async function updateProposalStatus(id, fullData) {
+  if (!db) return false;
+  try {
+    await set(ref(db, `proposals/${id}`), fullData);
+    return true;
+  } catch (e) {
+    console.error("updateProposalStatus error:", e);
     return false;
   }
 }

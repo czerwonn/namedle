@@ -4,6 +4,8 @@ import {
   getGlobalWins, recordWin as recordWinFB, getLeaderboard,
   getUserStats, getDailyPlayerCount, getAllFriends,
   addFriend, updateFriend, deleteFriend,
+  getAllQuotes, addQuote, updateQuote, deleteQuote,
+  getProposals, addProposal, updateProposalStatus,
 } from "./firebase";
 import {
   getDiscordLoginUrl, parseDiscordToken, fetchDiscordUser,
@@ -14,7 +16,21 @@ const BASE = import.meta.env.BASE_URL;
 const ADMIN_DISCORD_ID = "442046464290586654";
 
 const PATCH_NOTES = [
-    {
+  {
+    version: "2.0",
+    date: "04.03.2026",
+    image: `${BASE}zdjecia/03.04-patchnotes.png`,
+    changes: [
+      "Długo wyczekiwane 2.0.",
+      "Nowy tryb: Cytaty! Zgadnij kto to powiedział",
+      "Piramidka przycisków: 4 tryby gry",
+      "Passa wymaga ukończenia obu dziennych (klasyczny + cytaty)",
+      "Wnioski o dodanie/zmienienie osoby/cytatu",
+      "Nowa zakładka w leaderboardzie: Cytaty",
+      "Zdjęcie poniżej jest przykładem jednego z 4 różnych opcji w kategorii +"
+    ],
+  },
+  {
     version: "1.52",
     date: "27.02.2026",
     changes: [
@@ -120,6 +136,19 @@ function getRandomFriend(friends, excludeName) {
   return pool[Math.floor(Math.random() * pool.length)] || friends[0];
 }
 
+function getDailyQuote(quotes) {
+  if (quotes.length === 0) return null;
+  const sorted = [...quotes].sort((a, b) => a.text.localeCompare(b.text));
+  const d = new Date();
+  const seed = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  return sorted[(seed * 7 + 3) % sorted.length];
+}
+
+function getRandomQuote(quotes, excludeText) {
+  const pool = quotes.filter((q) => q.text !== excludeText);
+  return pool[Math.floor(Math.random() * pool.length)] || quotes[0];
+}
+
 function getTodayKey() {
   const d = new Date();
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
@@ -128,6 +157,14 @@ function getTodayKey() {
 function loadDaily() {
   try {
     const s = JSON.parse(localStorage.getItem("namedle_daily"));
+    if (s && s.date === getTodayKey()) return { guesses: s.guesses, won: s.won };
+  } catch {}
+  return { guesses: [], won: false };
+}
+
+function loadDailyQuote() {
+  try {
+    const s = JSON.parse(localStorage.getItem("namedle_daily_quote"));
     if (s && s.date === getTodayKey()) return { guesses: s.guesses, won: s.won };
   } catch {}
   return { guesses: [], won: false };
@@ -142,16 +179,19 @@ function loadDailyPosition() {
 }
 
 const emptyAdminForm = { name: "", image: "", skill: "mid", wzrost: "sredni", region: "", kortyzol: "sredni", rokUrodzenia: "" };
+const emptyQuoteForm = { text: "", author: "" };
 
 export default function Namedle() {
   const [authState, setAuthState] = useState("loading");
   const [discordUser, setDiscordUser] = useState(null);
 
   const [friends, setFriends] = useState([]);
+  const [quotes, setQuotes] = useState([]);
   const [friendsLoaded, setFriendsLoaded] = useState(false);
 
   const [mode, setMode] = useState("daily");
   const [answer, setAnswer] = useState(null);
+  const [currentQuote, setCurrentQuote] = useState(null);
   const [guesses, setGuesses] = useState(() => loadDaily().guesses);
   const [won, setWon] = useState(() => loadDaily().won);
   const [filter, setFilter] = useState("");
@@ -178,9 +218,27 @@ export default function Namedle() {
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
   const [adminEditing, setAdminEditing] = useState(null);
   const [adminSubmitting, setAdminSubmitting] = useState(false);
+  const [adminSection, setAdminSection] = useState("friends");
+  const [adminQuoteForm, setAdminQuoteForm] = useState(emptyQuoteForm);
+  const [adminQuoteEditing, setAdminQuoteEditing] = useState(null);
+
+  const [showProposal, setShowProposal] = useState(false);
+  const [proposalType, setProposalType] = useState("");
+  const [proposalPersonForm, setProposalPersonForm] = useState(emptyAdminForm);
+  const [proposalQuoteForm, setProposalQuoteForm] = useState(emptyQuoteForm);
+  const [proposalTargetPerson, setProposalTargetPerson] = useState(null);
+  const [proposalTargetQuote, setProposalTargetQuote] = useState(null);
+  const [proposalSubmitting, setProposalSubmitting] = useState(false);
+  const [proposalSuccess, setProposalSuccess] = useState(false);
+  const [proposals, setProposals] = useState([]);
+  const [proposalApprovingId, setProposalApprovingId] = useState(null);
 
   const dropRef = useRef(null);
   const dailySave = useRef({ guesses: [], won: false, date: getTodayKey() });
+  const dailyQuoteSave = useRef({ guesses: [], won: false, date: getTodayKey() });
+
+  const isQuoteMode = mode === "dailyQuote" || mode === "infiniteQuote";
+  const isDailyMode = mode === "daily" || mode === "dailyQuote";
 
   const guessedNames = guesses.map((g) => g.name);
   const filtered = friends
@@ -188,6 +246,9 @@ export default function Namedle() {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const isAdmin = discordUser && discordUser.id === ADMIN_DISCORD_ID;
+  const todayKey = getTodayKey();
+  const classicDailyDone = (userStats?.lastClassicDailyWinDate === todayKey) || (mode === "daily" && won) || loadDaily().won;
+  const quoteDailyDone = (userStats?.lastQuoteDailyWinDate === todayKey) || (mode === "dailyQuote" && won) || loadDailyQuote().won;
 
   useEffect(() => {
     async function init() {
@@ -207,8 +268,11 @@ export default function Namedle() {
 
       setDiscordUser(user);
 
-      const [friendsList, wins, stats] = await Promise.all([getAllFriends(), getGlobalWins(), getUserStats(user.id)]);
+      const [friendsList, wins, stats, quotesList] = await Promise.all([
+        getAllFriends(), getGlobalWins(), getUserStats(user.id), getAllQuotes(),
+      ]);
       setFriends(friendsList);
+      setQuotes(quotesList);
       setFriendsLoaded(true);
       setGlobalWins(wins);
       localStorage.setItem("namedle_global_cache", wins);
@@ -221,7 +285,7 @@ export default function Namedle() {
   useEffect(() => {
     if (friendsLoaded && friends.length > 0) {
       const dailyFriend = getDailyFriend(friends);
-      if (!answer) setAnswer(dailyFriend);
+      if (!answer && mode === "daily") setAnswer(dailyFriend);
       if (mode === "daily" && won && dailyFriend) {
         const hasCorrectGuess = guesses.some((g) => g.name === dailyFriend.name);
         if (!hasCorrectGuess) {
@@ -253,17 +317,29 @@ export default function Namedle() {
           setWon(false);
           setWinPosition(0);
           if (friends.length > 0) setAnswer(getDailyFriend(friends));
+        } else if (mode === "dailyQuote") {
+          setGuesses([]);
+          setWon(false);
+          if (quotes.length > 0) {
+            const q = getDailyQuote(quotes);
+            setCurrentQuote(q);
+            if (q) setAnswer(friends.find((f) => f.name === q.author) || null);
+          }
         }
         dailySave.current = { guesses: [], won: false, date: today };
+        dailyQuoteSave.current = { guesses: [], won: false, date: today };
       }
     }
     document.addEventListener("visibilitychange", checkDateChange);
     return () => document.removeEventListener("visibilitychange", checkDateChange);
-  }, [mode, friends]);
+  }, [mode, friends, quotes]);
 
   useEffect(() => {
     if (mode === "daily") {
       localStorage.setItem("namedle_daily", JSON.stringify({ date: getTodayKey(), guesses, won }));
+    }
+    if (mode === "dailyQuote") {
+      localStorage.setItem("namedle_daily_quote", JSON.stringify({ date: getTodayKey(), guesses, won }));
     }
   }, [guesses, won, mode]);
 
@@ -272,6 +348,7 @@ export default function Namedle() {
     setShowLeaderboard(false);
     setShowStats(false);
     setShowAdmin(false);
+    setShowProposal(false);
   }
 
   function playWin() {
@@ -286,13 +363,12 @@ export default function Namedle() {
       setWon(true);
       playWin();
       const dateKey = getTodayKey();
-      const isDaily = mode === "daily";
-      recordWinFB(dateKey, isDaily, discordUser).then(async (res) => {
+      recordWinFB(dateKey, mode, discordUser).then(async (res) => {
         if (res.globalWins > 0) {
           setGlobalWins(res.globalWins);
           localStorage.setItem("namedle_global_cache", res.globalWins);
         }
-        if (isDaily && res.dailyPosition > 0) {
+        if (isDailyMode && res.dailyPosition > 0) {
           setWinPosition(res.dailyPosition);
           localStorage.setItem("namedle_daily_position", JSON.stringify({ date: dateKey, position: res.dailyPosition }));
         }
@@ -305,7 +381,13 @@ export default function Namedle() {
   }
 
   function nextRound() {
-    setAnswer(getRandomFriend(friends, answer.name));
+    if (isQuoteMode) {
+      const q = getRandomQuote(quotes, currentQuote?.text);
+      setCurrentQuote(q);
+      if (q) setAnswer(friends.find((f) => f.name === q.author) || null);
+    } else {
+      setAnswer(getRandomFriend(friends, answer?.name));
+    }
     setGuesses([]);
     setWon(false);
     setFilter("");
@@ -314,8 +396,12 @@ export default function Namedle() {
   function switchMode(m) {
     if (m === mode) return;
     if (mode === "daily") dailySave.current = { guesses, won, date: getTodayKey() };
+    if (mode === "dailyQuote") dailyQuoteSave.current = { guesses, won, date: getTodayKey() };
+
     setMode(m);
     setFilter("");
+    setShowDrop(false);
+
     if (m === "daily") {
       const today = getTodayKey();
       if (dailySave.current.date === today) {
@@ -327,10 +413,32 @@ export default function Namedle() {
         setWinPosition(0);
       }
       setAnswer(getDailyFriend(friends));
-    } else {
+      setCurrentQuote(null);
+    } else if (m === "infinite") {
       setGuesses([]);
       setWon(false);
       setAnswer(getRandomFriend(friends, ""));
+      setCurrentQuote(null);
+    } else if (m === "dailyQuote") {
+      const today = getTodayKey();
+      if (dailyQuoteSave.current.date === today) {
+        setGuesses(dailyQuoteSave.current.guesses);
+        setWon(dailyQuoteSave.current.won);
+      } else {
+        setGuesses([]);
+        setWon(false);
+      }
+      const q = getDailyQuote(quotes);
+      setCurrentQuote(q);
+      if (q) setAnswer(friends.find((f) => f.name === q.author) || null);
+      else setAnswer(null);
+    } else if (m === "infiniteQuote") {
+      setGuesses([]);
+      setWon(false);
+      const q = getRandomQuote(quotes, "");
+      setCurrentQuote(q);
+      if (q) setAnswer(friends.find((f) => f.name === q.author) || null);
+      else setAnswer(null);
     }
   }
 
@@ -366,18 +474,18 @@ export default function Namedle() {
     closeAllPanels();
     setAdminEditing(null);
     setAdminForm(emptyAdminForm);
+    setAdminQuoteEditing(null);
+    setAdminQuoteForm(emptyQuoteForm);
     setShowAdmin(true);
+    getProposals("pending").then(setProposals);
   }
 
   function startEdit(friend) {
     setAdminEditing(friend.id);
     setAdminForm({
-      name: friend.name,
-      image: friend.image || "",
-      skill: friend.skill,
-      wzrost: friend.wzrost,
-      region: friend.region,
-      kortyzol: friend.kortyzol,
+      name: friend.name, image: friend.image || "",
+      skill: friend.skill, wzrost: friend.wzrost,
+      region: friend.region, kortyzol: friend.kortyzol,
       rokUrodzenia: friend.rokUrodzenia,
     });
   }
@@ -392,20 +500,14 @@ export default function Namedle() {
     const data = {
       name: adminForm.name.trim().toLowerCase(),
       image: adminForm.image.trim(),
-      skill: adminForm.skill,
-      wzrost: adminForm.wzrost,
+      skill: adminForm.skill, wzrost: adminForm.wzrost,
       region: adminForm.region.trim().toLowerCase(),
       kortyzol: adminForm.kortyzol,
       rokUrodzenia: adminForm.rokUrodzenia.trim(),
     };
-
     let success;
-    if (adminEditing) {
-      success = await updateFriend(adminEditing, data);
-    } else {
-      success = await addFriend(data);
-    }
-
+    if (adminEditing) success = await updateFriend(adminEditing, data);
+    else success = await addFriend(data);
     if (success) {
       const updated = await getAllFriends();
       setFriends(updated);
@@ -417,14 +519,119 @@ export default function Namedle() {
 
   async function handleAdminDelete(id, name) {
     if (!confirm(`Usunąć ${name}?`)) return;
-    const success = await deleteFriend(id);
-    if (success) {
-      const updated = await getAllFriends();
-      setFriends(updated);
-    }
+    if (await deleteFriend(id)) setFriends(await getAllFriends());
   }
 
-  const ok = (guess, key) => guess[key] === answer[key];
+  function startQuoteEdit(q) {
+    setAdminQuoteEditing(q.id);
+    setAdminQuoteForm({ text: q.text, author: q.author });
+  }
+
+  function cancelQuoteEdit() {
+    setAdminQuoteEditing(null);
+    setAdminQuoteForm(emptyQuoteForm);
+  }
+
+  async function handleQuoteSubmit() {
+    setAdminSubmitting(true);
+    const data = {
+      text: adminQuoteForm.text.trim(),
+      author: adminQuoteForm.author,
+      submittedBy: "admin",
+      createdAt: Date.now(),
+    };
+    let success;
+    if (adminQuoteEditing) success = await updateQuote(adminQuoteEditing, data);
+    else success = await addQuote(data);
+    if (success) {
+      setQuotes(await getAllQuotes());
+      setAdminQuoteForm(emptyQuoteForm);
+      setAdminQuoteEditing(null);
+    }
+    setAdminSubmitting(false);
+  }
+
+  async function handleQuoteDelete(id) {
+    if (!confirm("Usunąć cytat?")) return;
+    if (await deleteQuote(id)) setQuotes(await getAllQuotes());
+  }
+
+  function openProposalPanel() {
+    closeAllPanels();
+    setProposalType("");
+    setProposalPersonForm(emptyAdminForm);
+    setProposalQuoteForm(emptyQuoteForm);
+    setProposalTargetPerson(null);
+    setProposalTargetQuote(null);
+    setProposalSubmitting(false);
+    setProposalSuccess(false);
+    setShowProposal(true);
+  }
+
+  async function handleSubmitProposal() {
+    setProposalSubmitting(true);
+    let data;
+    const personData = {
+      name: proposalPersonForm.name.trim().toLowerCase(),
+      image: proposalPersonForm.image.trim(),
+      skill: proposalPersonForm.skill,
+      wzrost: proposalPersonForm.wzrost,
+      region: proposalPersonForm.region.trim().toLowerCase(),
+      kortyzol: proposalPersonForm.kortyzol,
+      rokUrodzenia: proposalPersonForm.rokUrodzenia.trim(),
+    };
+    const base = {
+      submittedBy: discordUser.id,
+      submittedByName: discordUser.global_name || discordUser.username,
+      createdAt: Date.now(),
+      status: "pending",
+    };
+    if (proposalType === "addPerson") {
+      data = { ...base, type: "addPerson", data: personData };
+    } else if (proposalType === "editPerson") {
+      data = { ...base, type: "editPerson", targetId: proposalTargetPerson.id, targetName: proposalTargetPerson.name, data: personData };
+    } else if (proposalType === "addQuote") {
+      data = { ...base, type: "addQuote", data: { text: proposalQuoteForm.text.trim(), author: proposalQuoteForm.author, submittedBy: discordUser.id, createdAt: Date.now() } };
+    } else if (proposalType === "editQuote") {
+      data = { ...base, type: "editQuote", targetId: proposalTargetQuote.id, targetName: proposalTargetQuote.text.substring(0, 50), data: { text: proposalQuoteForm.text.trim(), author: proposalQuoteForm.author, submittedBy: proposalTargetQuote.submittedBy || discordUser.id, createdAt: proposalTargetQuote.createdAt || Date.now() } };
+    }
+    const ok2 = await addProposal(data);
+    setProposalSubmitting(false);
+    if (ok2) setProposalSuccess(true);
+  }
+
+  async function handleApproveProposal(proposal) {
+    setProposalApprovingId(proposal.id);
+    let success = false;
+    if (proposal.type === "addPerson") {
+      success = await addFriend(proposal.data);
+      if (success) setFriends(await getAllFriends());
+    } else if (proposal.type === "editPerson") {
+      success = await updateFriend(proposal.targetId, proposal.data);
+      if (success) setFriends(await getAllFriends());
+    } else if (proposal.type === "addQuote") {
+      success = await addQuote(proposal.data);
+      if (success) setQuotes(await getAllQuotes());
+    } else if (proposal.type === "editQuote") {
+      success = await updateQuote(proposal.targetId, proposal.data);
+      if (success) setQuotes(await getAllQuotes());
+    }
+    if (success) {
+      await updateProposalStatus(proposal.id, { ...proposal, status: "approved" });
+      setProposals(await getProposals("pending"));
+    }
+    setProposalApprovingId(null);
+  }
+
+  async function handleRejectProposal(proposal) {
+    setProposalApprovingId(proposal.id);
+    await updateProposalStatus(proposal.id, { ...proposal, status: "rejected" });
+    setProposals(await getProposals("pending"));
+    setProposalApprovingId(null);
+  }
+
+  const ok = (guess, key) => guess[key] === answer?.[key];
+  const noQuotes = isQuoteMode && quotes.length === 0;
 
   if (authState === "loading" || (authState === "ready" && !friendsLoaded)) {
     return (
@@ -475,7 +682,7 @@ export default function Namedle() {
     );
   }
 
-  if (!answer) {
+  if (!answer && !isQuoteMode && friends.length > 0) {
     return (
       <div style={{
         minHeight: "100vh", background: "#0b0b0f", color: "#555",
@@ -505,6 +712,7 @@ export default function Namedle() {
         .btn-on { background: #7c3aed; color: #fff; }
         .btn-off { background: #161620; color: #666; }
         .btn-off:hover { background: #1e1e2e; color: #999; }
+        .btn-sm { padding: 6px 14px; font-size: 11px; }
       `}</style>
 
       {discordUser && (
@@ -533,22 +741,48 @@ export default function Namedle() {
       </div>
       <p style={{ color: "#555", fontSize: "13px", margin: "0 0 4px" }}>Zgaduj zgadula.</p>
       <p style={{ color: "#444", fontSize: "11px", margin: "0 0 16px", fontStyle: "italic" }}>
-        Z czasem coraz więcej osób zostanie dodanych.
+        Z czasem coraz więcej osób i cytatów zostanie dodanych.
       </p>
 
-      <div style={{ display: "flex", gap: "6px", marginBottom: mode === "daily" ? "8px" : "24px" }}>
-        <button className={`btn ${mode === "daily" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("daily")}>Codzienny</button>
-        <button className={`btn ${mode === "infinite" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("infinite")}>Nieskończony</button>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "4px", marginBottom: isDailyMode ? "8px" : "24px" }}>
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button className={`btn ${mode === "daily" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("daily")}>Codzienny</button>
+          <button className={`btn ${mode === "infinite" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("infinite")}>Nieskończony</button>
+        </div>
+        <div style={{ display: "flex", gap: "6px" }}>
+          <button className={`btn btn-sm ${mode === "dailyQuote" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("dailyQuote")}>Cytaty dzienne</button>
+          <button className={`btn btn-sm ${mode === "infiniteQuote" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("infiniteQuote")}>Cytaty ∞</button>
+        </div>
       </div>
 
-      {mode === "daily" && (
+      {isDailyMode && (
         <div style={{ textAlign: "center", marginBottom: "16px", fontSize: "12px", color: "#888" }}>
           <div>Twoja dzienna passa: <strong style={{ color: "#c4b5fd" }}>{userStats ? userStats.dailyStreak : 0}</strong></div>
           <div>Twoja najdłuższa dzienna passa: <strong style={{ color: "#c4b5fd" }}>{userStats ? userStats.maxDailyStreak : 0}</strong></div>
+          <div style={{ marginTop: "4px", fontSize: "11px", color: "#555" }}>
+            Klasyczny: {classicDailyDone ? "✅" : "❌"} | Cytaty: {quoteDailyDone ? "✅" : "❌"}
+          </div>
         </div>
       )}
 
-      {!won && (
+      {isQuoteMode && currentQuote && !noQuotes && (
+        <div style={{
+          maxWidth: "400px", width: "100%", padding: "20px 24px",
+          background: "#131318", border: "1px solid #222", borderRadius: "12px",
+          marginBottom: "20px", textAlign: "center",
+        }}>
+          <div style={{ fontSize: "11px", color: "#555", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>Kto to powiedział?</div>
+          <div style={{ fontSize: "16px", color: "#c4b5fd", fontStyle: "italic", lineHeight: 1.5 }}>
+            &ldquo;{currentQuote.text}&rdquo;
+          </div>
+        </div>
+      )}
+
+      {noQuotes && (
+        <p style={{ color: "#555", fontSize: "13px", margin: "0 0 24px" }}>Brak cytatów w bazie. Dodaj cytaty przez panel admina.</p>
+      )}
+
+      {!won && !noQuotes && answer && (
         <div ref={dropRef} style={{ position: "relative", width: "100%", maxWidth: "340px", marginBottom: "24px", zIndex: 10 }}>
           <input
             placeholder="Wpisz nick..."
@@ -582,7 +816,7 @@ export default function Namedle() {
         </div>
       )}
 
-      {guesses.length > 0 && (
+      {!isQuoteMode && guesses.length > 0 && (
         <div style={{ width: "100%", maxWidth: "680px", overflowX: "auto" }}>
           <div style={{ display: "grid", gridTemplateColumns: "130px repeat(5, 1fr)", gap: "3px", marginBottom: "3px", minWidth: "580px" }}>
             <div style={{ fontSize: "10px", color: "#555", padding: "4px 8px", textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>Kto?</div>
@@ -597,10 +831,10 @@ export default function Namedle() {
               gap: "3px", marginBottom: "3px", minWidth: "580px",
             }}>
               <div className="cell" style={{
-                background: guess.name === answer.name ? "#16a34a" : "#161620",
+                background: guess.name === answer?.name ? "#16a34a" : "#161620",
                 borderRadius: "6px", padding: "8px", display: "flex",
                 alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 700,
-                color: guess.name === answer.name ? "#fff" : "#c4b5fd",
+                color: guess.name === answer?.name ? "#fff" : "#c4b5fd",
               }}>
                 {guess.image && <img src={guess.image} alt="" style={{ width: 26, height: 26, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />}
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{guess.name}</span>
@@ -620,20 +854,40 @@ export default function Namedle() {
         </div>
       )}
 
+      {isQuoteMode && guesses.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", justifyContent: "center", maxWidth: "400px" }}>
+          {[...guesses].reverse().map((g, i) => (
+            <div key={guesses.length - 1 - i} className="cell" style={{
+              padding: "8px 16px", borderRadius: "8px",
+              background: g.name === answer?.name ? "#16a34a" : "#161620",
+              color: g.name === answer?.name ? "#fff" : "#888",
+              fontSize: "13px", fontWeight: 600,
+            }}>
+              {g.name}
+            </div>
+          ))}
+        </div>
+      )}
+
       {won && (
         <div style={{ textAlign: "center", marginTop: "28px", animation: "pop 0.4s ease" }}>
           <div style={{ fontSize: "40px", marginBottom: "8px" }}>🎉</div>
           <div style={{ fontSize: "20px", fontWeight: 800, color: "#22c55e", marginBottom: "4px" }}>Brawo!</div>
           <p style={{ color: "#666", fontSize: "13px", margin: "0 0 8px" }}>
-            To był <strong style={{ color: "#c4b5fd" }}>{answer.name}</strong> - {guesses.length}{" "}
-            {guesses.length === 1 ? "próba" : guesses.length < 5 ? "próby" : "prób"}
+            {isQuoteMode ? (
+              <>To powiedział <strong style={{ color: "#c4b5fd" }}>{answer?.name}</strong> - {guesses.length}{" "}
+              {guesses.length === 1 ? "próba" : guesses.length < 5 ? "próby" : "prób"}</>
+            ) : (
+              <>To był <strong style={{ color: "#c4b5fd" }}>{answer?.name}</strong> - {guesses.length}{" "}
+              {guesses.length === 1 ? "próba" : guesses.length < 5 ? "próby" : "prób"}</>
+            )}
           </p>
-          {mode === "daily" && winPosition > 0 && (
+          {isDailyMode && winPosition > 0 && (
             <p style={{ color: "#888", fontSize: "12px", margin: "0 0 16px" }}>
               Jesteś <strong style={{ color: "#facc15" }}>{winPosition}.</strong> osobą, która dzisiaj rozwiązała namedle!
             </p>
           )}
-          {mode === "infinite" && (
+          {(mode === "infinite" || mode === "infiniteQuote") && (
             <button onClick={nextRound} className="btn btn-on">Następny →</button>
           )}
         </div>
@@ -651,12 +905,10 @@ export default function Namedle() {
       </div>
 
       <div style={{ position: "fixed", top: "14px", right: "14px", display: "flex", gap: "6px", zIndex: 40 }}>
-        {isAdmin && (
-          <button onClick={openAdmin} title="Admin"
-            style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "6px 10px", fontSize: "16px", cursor: "pointer", lineHeight: 1, color: "#fff", transition: "background 0.15s" }}
-            onMouseEnter={(e) => e.currentTarget.style.background = "#1e1e2e"}
-            onMouseLeave={(e) => e.currentTarget.style.background = "#161620"}>⚙️</button>
-        )}
+        <button onClick={openProposalPanel} title="Zaproponuj dodanie/zmianę"
+          style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "6px 10px", fontSize: "16px", cursor: "pointer", lineHeight: 1, color: "#fff", transition: "background 0.15s" }}
+          onMouseEnter={(e) => e.currentTarget.style.background = "#1e1e2e"}
+          onMouseLeave={(e) => e.currentTarget.style.background = "#161620"}>➕</button>
         <button onClick={openLeaderboard} title="Leaderboard"
           style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "6px 10px", fontSize: "16px", cursor: "pointer", lineHeight: 1, color: "#fff", transition: "background 0.15s" }}
           onMouseEnter={(e) => e.currentTarget.style.background = "#1e1e2e"}
@@ -669,6 +921,12 @@ export default function Namedle() {
           style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "6px 10px", fontSize: "16px", cursor: "pointer", lineHeight: 1, color: "#fff", transition: "background 0.15s" }}
           onMouseEnter={(e) => e.currentTarget.style.background = "#1e1e2e"}
           onMouseLeave={(e) => e.currentTarget.style.background = "#161620"}>📃</button>
+        {isAdmin && (
+          <button onClick={openAdmin} title="Admin"
+            style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "6px 10px", fontSize: "16px", cursor: "pointer", lineHeight: 1, color: "#fff", transition: "background 0.15s" }}
+            onMouseEnter={(e) => e.currentTarget.style.background = "#1e1e2e"}
+            onMouseLeave={(e) => e.currentTarget.style.background = "#161620"}>⚙️</button>
+        )}
       </div>
 
       {showLeaderboard && (
@@ -691,6 +949,7 @@ export default function Namedle() {
                 { key: "dailyStreak", label: "Aktualna passa" },
                 { key: "maxDailyStreak", label: "Rekordowa passa" },
                 { key: "infiniteWins", label: "Nieskończony" },
+                { key: "quoteInfiniteWins", label: "Cytaty ∞" },
               ].map((t) => (
                 <button key={t.key} onClick={() => switchLeaderboardTab(t.key)}
                   className={`btn ${leaderboardTab === t.key ? "btn-on" : "btn-off"}`}
@@ -751,6 +1010,7 @@ export default function Namedle() {
                     { label: "Aktualna passa", value: userStats.dailyStreak },
                     { label: "Rekordowa passa", value: userStats.maxDailyStreak },
                     { label: "Nieskończony", value: userStats.infiniteWins },
+                    { label: "Cytaty ∞", value: userStats.quoteInfiniteWins },
                     { label: "Razem wygrane", value: userStats.wins },
                   ].map((s) => (
                     <div key={s.label} style={{ background: "#161620", borderRadius: "8px", padding: "12px", textAlign: "center" }}>
@@ -796,73 +1056,377 @@ export default function Namedle() {
                 style={{ background: "none", border: "none", color: "#555", fontSize: "20px", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
             </div>
 
-            <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
-              {adminEditing ? "Edytuj osobę" : "Dodaj osobę"}
-            </h3>
-
-            <input placeholder="Nick" value={adminForm.name}
-              onChange={(e) => setAdminForm((f) => ({ ...f, name: e.target.value }))} style={adminInputStyle} />
-            <input placeholder="URL zdjęcia" value={adminForm.image}
-              onChange={(e) => setAdminForm((f) => ({ ...f, image: e.target.value }))} style={adminInputStyle} />
-            <select value={adminForm.skill}
-              onChange={(e) => setAdminForm((f) => ({ ...f, skill: e.target.value }))} style={adminInputStyle}>
-              <option value="goated">goated</option>
-              <option value="mid">mid</option>
-              <option value="ass">ass</option>
-            </select>
-            <select value={adminForm.wzrost}
-              onChange={(e) => setAdminForm((f) => ({ ...f, wzrost: e.target.value }))} style={adminInputStyle}>
-              <option value="niski">niski</option>
-              <option value="sredni">sredni</option>
-              <option value="wysoki">wysoki</option>
-            </select>
-            <input placeholder="Region (miasto)" value={adminForm.region}
-              onChange={(e) => setAdminForm((f) => ({ ...f, region: e.target.value }))} style={adminInputStyle} />
-            <select value={adminForm.kortyzol}
-              onChange={(e) => setAdminForm((f) => ({ ...f, kortyzol: e.target.value }))} style={adminInputStyle}>
-              <option value="niski">niski</option>
-              <option value="sredni">sredni</option>
-              <option value="wysoki">wysoki</option>
-            </select>
-            <input placeholder="Rok urodzenia" value={adminForm.rokUrodzenia}
-              onChange={(e) => setAdminForm((f) => ({ ...f, rokUrodzenia: e.target.value }))} style={adminInputStyle} />
-
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                disabled={adminSubmitting || !adminForm.name}
-                onClick={handleAdminSubmit}
-                className="btn btn-on"
-                style={{ opacity: adminSubmitting ? 0.5 : 1, flex: 1 }}>
-                {adminSubmitting ? "..." : adminEditing ? "Zapisz" : "Dodaj"}
+            <div style={{ display: "flex", gap: "4px" }}>
+              <button onClick={() => setAdminSection("friends")}
+                className={`btn ${adminSection === "friends" ? "btn-on" : "btn-off"}`}
+                style={{ fontSize: "12px", padding: "6px 14px" }}>Osoby</button>
+              <button onClick={() => setAdminSection("quotes")}
+                className={`btn ${adminSection === "quotes" ? "btn-on" : "btn-off"}`}
+                style={{ fontSize: "12px", padding: "6px 14px" }}>Cytaty</button>
+              <button onClick={() => { setAdminSection("proposals"); getProposals("pending").then(setProposals); }}
+                className={`btn ${adminSection === "proposals" ? "btn-on" : "btn-off"}`}
+                style={{ fontSize: "12px", padding: "6px 14px" }}>
+                Wnioski{proposals.length > 0 ? ` (${proposals.length})` : ""}
               </button>
-              {adminEditing && (
-                <button onClick={cancelEdit} className="btn btn-off">Anuluj</button>
-              )}
             </div>
 
-            <div style={{ height: "1px", background: "#1a1a2a" }} />
+            {adminSection === "friends" && (
+              <>
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                  {adminEditing ? "Edytuj osobę" : "Dodaj osobę"}
+                </h3>
 
-            <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
-              Osoby ({friends.length})
-            </h3>
+                <input placeholder="Nick" value={adminForm.name}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, name: e.target.value }))} style={adminInputStyle} />
+                <input placeholder="URL zdjęcia" value={adminForm.image}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, image: e.target.value }))} style={adminInputStyle} />
+                <select value={adminForm.skill}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, skill: e.target.value }))} style={adminInputStyle}>
+                  <option value="goated">goated</option>
+                  <option value="mid">mid</option>
+                  <option value="ass">ass</option>
+                </select>
+                <select value={adminForm.wzrost}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, wzrost: e.target.value }))} style={adminInputStyle}>
+                  <option value="niski">niski</option>
+                  <option value="sredni">sredni</option>
+                  <option value="wysoki">wysoki</option>
+                </select>
+                <input placeholder="Region (miasto)" value={adminForm.region}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, region: e.target.value }))} style={adminInputStyle} />
+                <select value={adminForm.kortyzol}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, kortyzol: e.target.value }))} style={adminInputStyle}>
+                  <option value="niski">niski</option>
+                  <option value="sredni">sredni</option>
+                  <option value="wysoki">wysoki</option>
+                </select>
+                <input placeholder="Rok urodzenia" value={adminForm.rokUrodzenia}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, rokUrodzenia: e.target.value }))} style={adminInputStyle} />
 
-            {[...friends].sort((a, b) => a.name.localeCompare(b.name)).map((f) => (
-              <div key={f.id} style={{
-                display: "flex", alignItems: "center", gap: "8px",
-                padding: "8px 10px", background: "#161620", borderRadius: "8px",
-              }}>
-                {f.image && <img src={f.image} alt="" style={{ width: 24, height: 24, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />}
-                <span style={{ fontSize: "13px", fontWeight: 600, color: "#ddd", flex: 1 }}>{f.name}</span>
-                <button onClick={() => startEdit(f)}
-                  style={{ background: "none", border: "none", color: "#7c3aed", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
-                  Edytuj
-                </button>
-                <button onClick={() => handleAdminDelete(f.id, f.name)}
-                  style={{ background: "none", border: "none", color: "#ef4444", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
-                  Usuń
-                </button>
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button disabled={adminSubmitting || !adminForm.name} onClick={handleAdminSubmit}
+                    className="btn btn-on" style={{ opacity: adminSubmitting ? 0.5 : 1, flex: 1 }}>
+                    {adminSubmitting ? "..." : adminEditing ? "Zapisz" : "Dodaj"}
+                  </button>
+                  {adminEditing && <button onClick={cancelEdit} className="btn btn-off">Anuluj</button>}
+                </div>
+
+                <div style={{ height: "1px", background: "#1a1a2a" }} />
+
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                  Osoby ({friends.length})
+                </h3>
+
+                {[...friends].sort((a, b) => a.name.localeCompare(b.name)).map((f) => (
+                  <div key={f.id} style={{
+                    display: "flex", alignItems: "center", gap: "8px",
+                    padding: "8px 10px", background: "#161620", borderRadius: "8px",
+                  }}>
+                    {f.image && <img src={f.image} alt="" style={{ width: 24, height: 24, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />}
+                    <span style={{ fontSize: "13px", fontWeight: 600, color: "#ddd", flex: 1 }}>{f.name}</span>
+                    <button onClick={() => startEdit(f)}
+                      style={{ background: "none", border: "none", color: "#7c3aed", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
+                      Edytuj
+                    </button>
+                    <button onClick={() => handleAdminDelete(f.id, f.name)}
+                      style={{ background: "none", border: "none", color: "#ef4444", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
+                      Usuń
+                    </button>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {adminSection === "quotes" && (
+              <>
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                  {adminQuoteEditing ? "Edytuj cytat" : "Dodaj cytat"}
+                </h3>
+
+                <textarea placeholder="Treść cytatu..." value={adminQuoteForm.text}
+                  onChange={(e) => setAdminQuoteForm((f) => ({ ...f, text: e.target.value }))}
+                  style={{ ...adminInputStyle, minHeight: "80px", resize: "vertical" }} />
+                <select value={adminQuoteForm.author}
+                  onChange={(e) => setAdminQuoteForm((f) => ({ ...f, author: e.target.value }))} style={adminInputStyle}>
+                  <option value="">-- Kto to powiedział? --</option>
+                  {[...friends].sort((a, b) => a.name.localeCompare(b.name)).map((f) => (
+                    <option key={f.id} value={f.name}>{f.name}</option>
+                  ))}
+                </select>
+
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button disabled={adminSubmitting || !adminQuoteForm.text || !adminQuoteForm.author}
+                    onClick={handleQuoteSubmit} className="btn btn-on"
+                    style={{ opacity: adminSubmitting ? 0.5 : 1, flex: 1 }}>
+                    {adminSubmitting ? "..." : adminQuoteEditing ? "Zapisz" : "Dodaj"}
+                  </button>
+                  {adminQuoteEditing && <button onClick={cancelQuoteEdit} className="btn btn-off">Anuluj</button>}
+                </div>
+
+                <div style={{ height: "1px", background: "#1a1a2a" }} />
+
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                  Cytaty ({quotes.length})
+                </h3>
+
+                {quotes.map((q) => (
+                  <div key={q.id} style={{
+                    padding: "10px 12px", background: "#161620", borderRadius: "8px",
+                    display: "flex", flexDirection: "column", gap: "4px",
+                  }}>
+                    <div style={{ fontSize: "13px", color: "#c4b5fd", fontStyle: "italic" }}>&ldquo;{q.text}&rdquo;</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: "11px", color: "#555" }}>~ {q.author}</span>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <button onClick={() => startQuoteEdit(q)}
+                          style={{ background: "none", border: "none", color: "#7c3aed", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
+                          Edytuj
+                        </button>
+                        <button onClick={() => handleQuoteDelete(q.id)}
+                          style={{ background: "none", border: "none", color: "#ef4444", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
+                          Usuń
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {adminSection === "proposals" && (
+              <>
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                  Oczekujące wnioski ({proposals.length})
+                </h3>
+
+                {proposals.length === 0 && (
+                  <p style={{ color: "#444", fontSize: "13px" }}>Brak wniosków. Wszystko zatwierdzone!</p>
+                )}
+
+                {proposals.map((p) => {
+                  const typeLabel = { addPerson: "Nowa osoba", editPerson: "Zmiana osoby", addQuote: "Nowy cytat", editQuote: "Zmiana cytatu" }[p.type];
+                  const typeColor = { addPerson: "#22c55e", editPerson: "#3b82f6", addQuote: "#a855f7", editQuote: "#f59e0b" }[p.type];
+                  const isLoading = proposalApprovingId === p.id;
+                  return (
+                    <div key={p.id} style={{ padding: "12px", background: "#161620", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span style={{ background: typeColor + "22", color: typeColor, fontSize: "10px", fontWeight: 700, padding: "2px 8px", borderRadius: "6px", textTransform: "uppercase", letterSpacing: "0.5px" }}>{typeLabel}</span>
+                        <span style={{ fontSize: "11px", color: "#555" }}>od {p.submittedByName}</span>
+                      </div>
+
+                      {(p.type === "editPerson" || p.type === "editQuote") && (
+                        <div style={{ fontSize: "11px", color: "#666", fontStyle: "italic" }}>
+                          Zmiana: <strong style={{ color: "#888" }}>{p.targetName}</strong>
+                        </div>
+                      )}
+
+                      {(p.type === "addPerson" || p.type === "editPerson") && p.data && (
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px" }}>
+                          {[
+                            ["Nick", p.data.name],
+                            ["Skill", p.data.skill],
+                            ["Wzrost", p.data.wzrost],
+                            ["Region", p.data.region],
+                            ["Kortyzol", p.data.kortyzol],
+                            ["Rok ur.", p.data.rokUrodzenia],
+                          ].map(([label, val]) => (
+                            <div key={label} style={{ fontSize: "12px", color: "#888" }}>
+                              <span style={{ color: "#555" }}>{label}: </span>{val || "—"}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {(p.type === "addQuote" || p.type === "editQuote") && p.data && (
+                        <div>
+                          <div style={{ fontSize: "13px", color: "#c4b5fd", fontStyle: "italic", marginBottom: "4px" }}>&ldquo;{p.data.text}&rdquo;</div>
+                          <div style={{ fontSize: "11px", color: "#555" }}>~ {p.data.author}</div>
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
+                        <button onClick={() => handleApproveProposal(p)} disabled={isLoading}
+                          style={{ flex: 1, background: "#16a34a22", border: "1px solid #16a34a44", borderRadius: "8px", color: "#22c55e", fontSize: "12px", fontWeight: 700, padding: "6px", cursor: "pointer", fontFamily: "inherit", opacity: isLoading ? 0.5 : 1 }}>
+                          {isLoading ? "..." : "✓ Zatwierdź"}
+                        </button>
+                        <button onClick={() => handleRejectProposal(p)} disabled={isLoading}
+                          style={{ flex: 1, background: "#ef444422", border: "1px solid #ef444444", borderRadius: "8px", color: "#ef4444", fontSize: "12px", fontWeight: 700, padding: "6px", cursor: "pointer", fontFamily: "inherit", opacity: isLoading ? 0.5 : 1 }}>
+                          {isLoading ? "..." : "✗ Odrzuć"}
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+        </>
+      )}
+
+      {showProposal && (
+        <>
+          <div onClick={() => setShowProposal(false)} style={{ position: "fixed", inset: 0, background: "#00000066", zIndex: 50 }} />
+          <div style={{
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 90vw)",
+            background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
+            zIndex: 51, overflowY: "auto", padding: "24px 20px",
+            display: "flex", flexDirection: "column", gap: "16px",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "#22c55e" }}>➕ Zaproponuj</h2>
+              <button onClick={() => setShowProposal(false)}
+                style={{ background: "none", border: "none", color: "#555", fontSize: "20px", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
+            </div>
+
+            {proposalSuccess ? (
+              <div style={{ textAlign: "center", padding: "32px 0" }}>
+                <div style={{ fontSize: "36px", marginBottom: "12px" }}>✅</div>
+                <div style={{ fontSize: "15px", fontWeight: 700, color: "#22c55e", marginBottom: "8px" }}>good boy</div>
+                <p style={{ color: "#666", fontSize: "13px", margin: "0 0 20px" }}>Zaraz obczaje</p>
+                <button onClick={() => { setProposalSuccess(false); setProposalType(""); }} className="btn btn-off">wyślij kolejną</button>
               </div>
-            ))}
+            ) : (
+              <>
+                {!proposalType && (
+                  <>
+                    <p style={{ color: "#666", fontSize: "13px", margin: 0 }}>Co chcesz zaproponować?</p>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                      {[
+                        { key: "addPerson", label: "Nowa osoba", icon: "👤" },
+                        { key: "editPerson", label: "Zmień osobę", icon: "✏️" },
+                        { key: "addQuote", label: "Nowy cytat", icon: "💬" },
+                        { key: "editQuote", label: "Zmień cytat", icon: "📝" },
+                      ].map((t) => (
+                        <button key={t.key} onClick={() => {
+                          setProposalType(t.key);
+                          setProposalPersonForm(emptyAdminForm);
+                          setProposalQuoteForm(emptyQuoteForm);
+                          setProposalTargetPerson(null);
+                          setProposalTargetQuote(null);
+                        }} style={{
+                          background: "#161620", border: "1px solid #2a2a3a", borderRadius: "10px",
+                          padding: "16px 12px", cursor: "pointer", color: "#ddd",
+                          fontFamily: "inherit", fontSize: "13px", fontWeight: 600,
+                          display: "flex", flexDirection: "column", alignItems: "center", gap: "6px",
+                          transition: "background 0.15s",
+                        }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = "#1e1e2e"}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "#161620"}>
+                          <span style={{ fontSize: "22px" }}>{t.icon}</span>
+                          {t.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {(proposalType === "addPerson" || proposalType === "editPerson") && (
+                  <>
+                    <p style={{ color: "#888", fontSize: "12px", margin: 0, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px" }}>
+                      {proposalType === "addPerson" ? "Nowa osoba" : "Zmień osobę"}
+                    </p>
+
+                    {proposalType === "editPerson" && (
+                      <select value={proposalTargetPerson?.id || ""} onChange={(e) => {
+                        const f = friends.find((x) => x.id === e.target.value) || null;
+                        setProposalTargetPerson(f);
+                        if (f) setProposalPersonForm({ name: f.name, image: f.image || "", skill: f.skill, wzrost: f.wzrost, region: f.region, kortyzol: f.kortyzol, rokUrodzenia: f.rokUrodzenia });
+                      }} style={adminInputStyle}>
+                        <option value="">-- Kogo chcesz zmienić? --</option>
+                        {[...friends].sort((a, b) => a.name.localeCompare(b.name)).map((f) => (
+                          <option key={f.id} value={f.id}>{f.name}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {(proposalType === "addPerson" || proposalTargetPerson) && (
+                      <>
+                        <input placeholder="Nick" value={proposalPersonForm.name}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, name: e.target.value }))} style={adminInputStyle} />
+                        <input placeholder="URL zdjęcia (opcjonalnie)" value={proposalPersonForm.image}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, image: e.target.value }))} style={adminInputStyle} />
+                        <select value={proposalPersonForm.skill}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, skill: e.target.value }))} style={adminInputStyle}>
+                          <option value="goated">goated</option>
+                          <option value="mid">mid</option>
+                          <option value="ass">ass</option>
+                        </select>
+                        <select value={proposalPersonForm.wzrost}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, wzrost: e.target.value }))} style={adminInputStyle}>
+                          <option value="niski">niski</option>
+                          <option value="sredni">sredni</option>
+                          <option value="wysoki">wysoki</option>
+                        </select>
+                        <input placeholder="Region (miasto)" value={proposalPersonForm.region}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, region: e.target.value }))} style={adminInputStyle} />
+                        <select value={proposalPersonForm.kortyzol}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, kortyzol: e.target.value }))} style={adminInputStyle}>
+                          <option value="niski">niski</option>
+                          <option value="sredni">sredni</option>
+                          <option value="wysoki">wysoki</option>
+                        </select>
+                        <input placeholder="Rok urodzenia" value={proposalPersonForm.rokUrodzenia}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, rokUrodzenia: e.target.value }))} style={adminInputStyle} />
+                      </>
+                    )}
+                  </>
+                )}
+
+                {(proposalType === "addQuote" || proposalType === "editQuote") && (
+                  <>
+                    <p style={{ color: "#888", fontSize: "12px", margin: 0, fontWeight: 700, textTransform: "uppercase", letterSpacing: "1px" }}>
+                      {proposalType === "addQuote" ? "Nowy cytat" : "Zmień cytat"}
+                    </p>
+
+                    {proposalType === "editQuote" && (
+                      <select value={proposalTargetQuote?.id || ""} onChange={(e) => {
+                        const q = quotes.find((x) => x.id === e.target.value) || null;
+                        setProposalTargetQuote(q);
+                        if (q) setProposalQuoteForm({ text: q.text, author: q.author });
+                      }} style={adminInputStyle}>
+                        <option value="">-- Który cytat zmienić? --</option>
+                        {quotes.map((q) => (
+                          <option key={q.id} value={q.id}>{q.text.substring(0, 55)}… ~ {q.author}</option>
+                        ))}
+                      </select>
+                    )}
+
+                    {(proposalType === "addQuote" || proposalTargetQuote) && (
+                      <>
+                        <textarea placeholder="Treść cytatu..." value={proposalQuoteForm.text}
+                          onChange={(e) => setProposalQuoteForm((f) => ({ ...f, text: e.target.value }))}
+                          style={{ ...adminInputStyle, minHeight: "80px", resize: "vertical" }} />
+                        <select value={proposalQuoteForm.author}
+                          onChange={(e) => setProposalQuoteForm((f) => ({ ...f, author: e.target.value }))} style={adminInputStyle}>
+                          <option value="">-- Kto to powiedział? --</option>
+                          {[...friends].sort((a, b) => a.name.localeCompare(b.name)).map((f) => (
+                            <option key={f.id} value={f.name}>{f.name}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {proposalType && (
+                  <div style={{ display: "flex", gap: "8px", marginTop: "4px" }}>
+                    <button onClick={() => { setProposalType(""); setProposalTargetPerson(null); setProposalTargetQuote(null); }}
+                      className="btn btn-off">← Wróć</button>
+                    <button
+                      disabled={proposalSubmitting || !(
+                        (proposalType === "addPerson" && proposalPersonForm.name.trim()) ||
+                        (proposalType === "editPerson" && proposalTargetPerson && proposalPersonForm.name.trim()) ||
+                        (proposalType === "addQuote" && proposalQuoteForm.text.trim() && proposalQuoteForm.author) ||
+                        (proposalType === "editQuote" && proposalTargetQuote && proposalQuoteForm.text.trim() && proposalQuoteForm.author)
+                      )}
+                      onClick={handleSubmitProposal}
+                      className="btn btn-on" style={{ flex: 1, opacity: proposalSubmitting ? 0.5 : 1 }}>
+                      {proposalSubmitting ? "Wysyłanie..." : "Zaproponuj"}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </>
       )}
@@ -893,6 +1457,9 @@ export default function Namedle() {
                     <li key={i} style={{ fontSize: "13px", color: "#888", lineHeight: 1.5 }}>{c}</li>
                   ))}
                 </ul>
+                {entry.image && (
+                  <img src={entry.image} alt="" style={{ marginTop: "12px", width: "100%", borderRadius: "8px", border: "1px solid #1e1e2e" }} />
+                )}
               </div>
             ))}
           </div>
