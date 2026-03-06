@@ -1469,7 +1469,6 @@ export default function Namedle() {
                         { key: "addPerson", label: "Nowa osoba", icon: "👤" },
                         { key: "editPerson", label: "Zmień osobę", icon: "✏️" },
                         { key: "addQuote", label: "Nowy cytat", icon: "💬" },
-                        { key: "editQuote", label: "Zmień cytat", icon: "📝" },
                       ].map((t) => (
                         <button key={t.key} onClick={() => {
                           setProposalType(t.key);
