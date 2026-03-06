@@ -6,6 +6,8 @@ import {
   addFriend, updateFriend, deleteFriend,
   getAllQuotes, addQuote, updateQuote, deleteQuote,
   getProposals, addProposal, updateProposalStatus,
+  setUserServer as setUserServerFB,
+  getAllPatchNotes, addPatchNote, updatePatchNote, deletePatchNote,
 } from "./firebase";
 import {
   getDiscordLoginUrl, parseDiscordToken, fetchDiscordUser,
@@ -15,99 +17,6 @@ import {
 const BASE = import.meta.env.BASE_URL;
 const ADMIN_DISCORD_ID = "442046464290586654";
 
-const PATCH_NOTES = [
-  {
-    version: "2.0",
-    date: "04.03.2026",
-    image: `${BASE}zdjecia/03.04-patchnotes.png`,
-    changes: [
-      "Długo wyczekiwane 2.0.",
-      "Nowy tryb: Cytaty! Zgadnij kto to powiedział",
-      "Piramidka przycisków: 4 tryby gry",
-      "Passa wymaga ukończenia obu dziennych (klasyczny + cytaty)",
-      "Wnioski o dodanie/zmienienie osoby/cytatu",
-      "Nowa zakładka w leaderboardzie: Cytaty",
-      "Zdjęcie poniżej jest przykładem jednego z 4 różnych opcji w kategorii +"
-    ],
-  },
-  {
-    version: "1.52",
-    date: "27.02.2026",
-    changes: [
-      "Naprawiono błąd z zapisywaniem karty po północy (jeśli ktoś miał otwartą kartę do po północy (np. 23:59->00:00), to gra się psuła.",
-    ],
-  },
-  {
-    version: "1.51",
-    date: "26.02.2026",
-    changes: [
-      "Wyświetlanie dziennej passy pod przyciskami trybu",
-    ],
-  },
-  {
-    version: "1.5",
-    date: "26.02.2026",
-    changes: [
-      "Dodano panel statystyk",
-      "Leaderboard z 3 zakładkami: passa, rekord, nieskończony",
-      "Dodano system passy (daily streak)",
-      "Panel administracyjny",
-      "Osoby przeniesione do bazy danych",
-    ],
-  },
-  {
-    version: "1.4",
-    date: "26.02.2026",
-    changes: [
-      "Dodano logowanie przez Discorda",
-      "Globalny licznik wygranych",
-      "Dodano leaderboard",
-      "Naprawiono pozycje (tryb codzienny)",
-    ],
-  },
-  {
-    version: "1.3",
-    date: "26.02.2026",
-    changes: [
-      "Dodano licznik wygranych",
-      "Dodano informację o pozycji osoby po rozwiązaniu namedle",
-    ],
-  },
-  {
-    version: "1.2",
-    date: "25.02.2026",
-    changes: [
-      "Dodano najpopularniejsze ksywki z serwera kropka",
-      "Dodano wsparcie dla entera",
-    ],
-  },
-  {
-    version: "1.1",
-    date: "25.02.2026",
-    changes: [
-      "Dodano przycisk z patch notesami",
-      "Zaaktualizowano dane o osobach",
-      "Małe poprawki w kodzie",
-    ],
-  },
-  {
-    version: "1.01",
-    date: "24.02.2026",
-    changes: [
-      "Zmiany w danych o osobach",
-      "Dodano tekst o przyszłych aktualizacjach",
-    ],
-  },
-  {
-    version: "1.0",
-    date: "24.02.2026",
-    changes: [
-      "Pierwsze wydanie Namedle!",
-      "Tryb codzienny i nieskończony",
-      "19 osób w bazie",
-    ],
-  },
-];
 
 const CATEGORIES = [
   { key: "skill", label: "Skill" },
@@ -115,6 +24,7 @@ const CATEGORIES = [
   { key: "region", label: "Region" },
   { key: "kortyzol", label: "Kortyzol" },
   { key: "rokUrodzenia", label: "Rok ur." },
+  { key: "server", label: "Serwer" },
 ];
 
 const adminInputStyle = {
@@ -178,7 +88,17 @@ function loadDailyPosition() {
   return 0;
 }
 
-const emptyAdminForm = { name: "", image: "", skill: "mid", wzrost: "sredni", region: "", kortyzol: "sredni", rokUrodzenia: "" };
+function loadDailyQuotePosition() {
+  try {
+    const pos = JSON.parse(localStorage.getItem("namedle_daily_quote_position"));
+    if (pos && pos.date === getTodayKey()) return pos.position;
+  } catch {}
+  return 0;
+}
+
+
+
+const emptyAdminForm = { name: "", image: "", skill: "mid", wzrost: "sredni", region: "", kortyzol: "sredni", rokUrodzenia: "", server: "" };
 const emptyQuoteForm = { text: "", author: "" };
 
 export default function Namedle() {
@@ -198,6 +118,7 @@ export default function Namedle() {
   const [showDrop, setShowDrop] = useState(false);
 
   const [showNotes, setShowNotes] = useState(false);
+  const [patchNotes, setPatchNotes] = useState([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -209,10 +130,20 @@ export default function Namedle() {
     if (loadDaily().won) return loadDailyPosition();
     return 0;
   });
+  const [quoteWinPosition, setQuoteWinPosition] = useState(() => {
+    if (loadDailyQuote().won) return loadDailyQuotePosition();
+    return 0;
+  });
 
   const [leaderboard, setLeaderboard] = useState([]);
   const [leaderboardTab, setLeaderboardTab] = useState("dailyStreak");
+  const [leaderboardCategory, setLeaderboardCategory] = useState("pojedyncze");
   const [userStats, setUserStats] = useState(null);
+  const [userServer, setUserServer] = useState(() => localStorage.getItem("namedle_user_server") || "");
+  const [serverConfirmed, setServerConfirmed] = useState(() => !!localStorage.getItem("namedle_user_server"));
+  const [serverResetUsed, setServerResetUsed] = useState(() => !!localStorage.getItem("namedle_server_reset_used"));
+  const [showServerPicker, setShowServerPicker] = useState(false);
+  const [pendingServer, setPendingServer] = useState("");
   const [playersToday, setPlayersToday] = useState(0);
 
   const [adminForm, setAdminForm] = useState(emptyAdminForm);
@@ -221,6 +152,8 @@ export default function Namedle() {
   const [adminSection, setAdminSection] = useState("friends");
   const [adminQuoteForm, setAdminQuoteForm] = useState(emptyQuoteForm);
   const [adminQuoteEditing, setAdminQuoteEditing] = useState(null);
+  const [adminPatchForm, setAdminPatchForm] = useState({ version: "", date: "", image: "", changes: "" });
+  const [adminPatchEditing, setAdminPatchEditing] = useState(null);
 
   const [showProposal, setShowProposal] = useState(false);
   const [proposalType, setProposalType] = useState("");
@@ -234,10 +167,10 @@ export default function Namedle() {
   const [proposalApprovingId, setProposalApprovingId] = useState(null);
 
   const dropRef = useRef(null);
-  const dailySave = useRef({ guesses: [], won: false, date: getTodayKey() });
-  const dailyQuoteSave = useRef({ guesses: [], won: false, date: getTodayKey() });
+  const dailySave = useRef({ ...loadDaily(), date: getTodayKey() });
+  const dailyQuoteSave = useRef({ ...loadDailyQuote(), date: getTodayKey() });
 
-  const isQuoteMode = mode === "dailyQuote" || mode === "infiniteQuote";
+  const isQuoteMode = mode === "dailyQuote";
   const isDailyMode = mode === "daily" || mode === "dailyQuote";
 
   const guessedNames = guesses.map((g) => g.name);
@@ -268,15 +201,26 @@ export default function Namedle() {
 
       setDiscordUser(user);
 
-      const [friendsList, wins, stats, quotesList] = await Promise.all([
-        getAllFriends(), getGlobalWins(), getUserStats(user.id), getAllQuotes(),
+      const [friendsList, wins, stats, quotesList, patchList] = await Promise.all([
+        getAllFriends(), getGlobalWins(), getUserStats(user.id), getAllQuotes(), getAllPatchNotes(),
       ]);
       setFriends(friendsList);
       setQuotes(quotesList);
+      setPatchNotes(patchList);
       setFriendsLoaded(true);
       setGlobalWins(wins);
       localStorage.setItem("namedle_global_cache", wins);
-      if (stats) setUserStats(stats);
+      if (stats) {
+        setUserStats(stats);
+        const localServer = localStorage.getItem("namedle_user_server");
+        if (localServer && !stats.server) {
+          setUserServerFB(user.id, localServer);
+        } else if (stats.server && !localServer) {
+          localStorage.setItem("namedle_user_server", stats.server);
+          setUserServer(stats.server);
+          setServerConfirmed(true);
+        }
+      }
       setAuthState("ready");
     }
     init();
@@ -296,6 +240,17 @@ export default function Namedle() {
       }
     }
   }, [friendsLoaded, friends]);
+
+  useEffect(() => {
+    if (mode === "dailyQuote" && !answer && friends.length > 0 && quotes.length > 0) {
+      const q = getDailyQuote(quotes);
+      if (q) {
+        const found = friends.find((f) => f.name.toLowerCase() === (q.author || "").toLowerCase()) || null;
+        setCurrentQuote(q);
+        setAnswer(found);
+      }
+    }
+  }, [mode, friends, quotes]);
 
   useEffect(() => {
     const h = (e) => {
@@ -368,10 +323,15 @@ export default function Namedle() {
           setGlobalWins(res.globalWins);
           localStorage.setItem("namedle_global_cache", res.globalWins);
         }
-        if (isDailyMode && res.dailyPosition > 0) {
+        if (res.dailyPosition > 0) {
           setWinPosition(res.dailyPosition);
           localStorage.setItem("namedle_daily_position", JSON.stringify({ date: dateKey, position: res.dailyPosition }));
         }
+        if (res.quoteDailyPosition > 0) {
+          setQuoteWinPosition(res.quoteDailyPosition);
+          localStorage.setItem("namedle_daily_quote_position", JSON.stringify({ date: dateKey, position: res.quoteDailyPosition }));
+        }
+
         if (discordUser) {
           const stats = await getUserStats(discordUser.id);
           if (stats) setUserStats(stats);
@@ -420,25 +380,22 @@ export default function Namedle() {
       setAnswer(getRandomFriend(friends, ""));
       setCurrentQuote(null);
     } else if (m === "dailyQuote") {
-      const today = getTodayKey();
-      if (dailyQuoteSave.current.date === today) {
-        setGuesses(dailyQuoteSave.current.guesses);
-        setWon(dailyQuoteSave.current.won);
-      } else {
-        setGuesses([]);
-        setWon(false);
-      }
+      const saved = loadDailyQuote();
       const q = getDailyQuote(quotes);
+      const foundAnswer = q ? (friends.find((f) => f.name.toLowerCase() === (q.author || "").toLowerCase()) || null) : null;
+      // validate saved won: only trust it if there's actually a correct guess
+      const wonValid = saved.won && foundAnswer && saved.guesses.some((g) => g.name === foundAnswer.name);
+      setGuesses(saved.guesses);
+      setWon(wonValid);
       setCurrentQuote(q);
-      if (q) setAnswer(friends.find((f) => f.name === q.author) || null);
-      else setAnswer(null);
-    } else if (m === "infiniteQuote") {
+      setAnswer(foundAnswer);
+    } else if (["noname", "yesname", "kropka", "kotomoto"].includes(m)) {
       setGuesses([]);
       setWon(false);
-      const q = getRandomQuote(quotes, "");
-      setCurrentQuote(q);
-      if (q) setAnswer(friends.find((f) => f.name === q.author) || null);
-      else setAnswer(null);
+      setCurrentQuote(null);
+      const pool = friends.filter((f) => f.server === m);
+      const src = pool.length > 0 ? pool : friends;
+      setAnswer(src[Math.floor(Math.random() * src.length)]);
     }
   }
 
@@ -461,6 +418,22 @@ export default function Namedle() {
   function switchLeaderboardTab(tab) {
     setLeaderboardTab(tab);
     fetchLeaderboardTab(tab);
+  }
+
+  const SERVER_META = {
+    noname:   { label: "No Name",  color: "#6366f1" },
+    yesname:  { label: "Yes Name", color: "#888888" },
+    kropka:   { label: "Kropka",   color: "#f59e0b" },
+    kotomoto: { label: "Kotomoto", color: "#ef4444" },
+  };
+
+  function confirmServer() {
+    if (!pendingServer) return;
+    setUserServer(pendingServer);
+    setServerConfirmed(true);
+    setShowServerPicker(false);
+    localStorage.setItem("namedle_user_server", pendingServer);
+    if (discordUser) setUserServerFB(discordUser.id, pendingServer);
   }
 
   function openStats() {
@@ -487,6 +460,7 @@ export default function Namedle() {
       skill: friend.skill, wzrost: friend.wzrost,
       region: friend.region, kortyzol: friend.kortyzol,
       rokUrodzenia: friend.rokUrodzenia,
+      server: friend.server || "",
     });
   }
 
@@ -504,6 +478,7 @@ export default function Namedle() {
       region: adminForm.region.trim().toLowerCase(),
       kortyzol: adminForm.kortyzol,
       rokUrodzenia: adminForm.rokUrodzenia.trim(),
+      server: adminForm.server,
     };
     let success;
     if (adminEditing) success = await updateFriend(adminEditing, data);
@@ -579,6 +554,7 @@ export default function Namedle() {
       region: proposalPersonForm.region.trim().toLowerCase(),
       kortyzol: proposalPersonForm.kortyzol,
       rokUrodzenia: proposalPersonForm.rokUrodzenia.trim(),
+      server: proposalPersonForm.server,
     };
     const base = {
       submittedBy: discordUser.id,
@@ -749,9 +725,8 @@ export default function Namedle() {
           <button className={`btn ${mode === "daily" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("daily")}>Codzienny</button>
           <button className={`btn ${mode === "infinite" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("infinite")}>Nieskończony</button>
         </div>
-        <div style={{ display: "flex", gap: "6px" }}>
+        <div style={{ display: "flex", justifyContent: "center" }}>
           <button className={`btn btn-sm ${mode === "dailyQuote" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("dailyQuote")}>Cytaty dzienne</button>
-          <button className={`btn btn-sm ${mode === "infiniteQuote" ? "btn-on" : "btn-off"}`} onClick={() => switchMode("infiniteQuote")}>Cytaty ∞</button>
         </div>
       </div>
 
@@ -817,8 +792,8 @@ export default function Namedle() {
       )}
 
       {!isQuoteMode && guesses.length > 0 && (
-        <div style={{ width: "100%", maxWidth: "680px", overflowX: "auto" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "130px repeat(5, 1fr)", gap: "3px", marginBottom: "3px", minWidth: "580px" }}>
+        <div style={{ width: "100%", maxWidth: "860px", overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "140px repeat(6, 1fr)", gap: "4px", marginBottom: "4px", minWidth: "800px" }}>
             <div style={{ fontSize: "10px", color: "#555", padding: "4px 8px", textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>Kto?</div>
             {CATEGORIES.map((c) => (
               <div key={c.key} style={{ fontSize: "10px", color: "#555", padding: "4px", textAlign: "center", textTransform: "uppercase", letterSpacing: "1px", fontWeight: 700 }}>{c.label}</div>
@@ -827,8 +802,8 @@ export default function Namedle() {
 
           {[...guesses].reverse().map((guess, i) => (
             <div key={guesses.length - 1 - i} style={{
-              display: "grid", gridTemplateColumns: "130px repeat(5, 1fr)",
-              gap: "3px", marginBottom: "3px", minWidth: "580px",
+              display: "grid", gridTemplateColumns: "140px repeat(6, 1fr)",
+              gap: "4px", marginBottom: "4px", minWidth: "800px",
             }}>
               <div className="cell" style={{
                 background: guess.name === answer?.name ? "#16a34a" : "#161620",
@@ -847,12 +822,13 @@ export default function Namedle() {
                   borderRadius: "6px", padding: "8px 4px", textAlign: "center",
                   fontSize: "12px", fontWeight: ok(guess, c.key) ? 700 : 500,
                   color: ok(guess, c.key) ? "#fff" : "#888",
-                }}>{guess[c.key]}</div>
+                }}>{c.key === "server" ? (SERVER_META[guess[c.key]]?.label || guess[c.key] || "—") : guess[c.key]}</div>
               ))}
             </div>
           ))}
         </div>
       )}
+
 
       {isQuoteMode && guesses.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", justifyContent: "center", maxWidth: "400px" }}>
@@ -862,7 +838,9 @@ export default function Namedle() {
               background: g.name === answer?.name ? "#16a34a" : "#161620",
               color: g.name === answer?.name ? "#fff" : "#888",
               fontSize: "13px", fontWeight: 600,
+              display: "flex", alignItems: "center", gap: "8px",
             }}>
+              {g.image && <img src={g.image} alt="" style={{ width: 22, height: 22, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />}
               {g.name}
             </div>
           ))}
@@ -882,12 +860,17 @@ export default function Namedle() {
               {guesses.length === 1 ? "próba" : guesses.length < 5 ? "próby" : "prób"}</>
             )}
           </p>
-          {isDailyMode && winPosition > 0 && (
+          {mode === "daily" && winPosition > 0 && (
             <p style={{ color: "#888", fontSize: "12px", margin: "0 0 16px" }}>
               Jesteś <strong style={{ color: "#facc15" }}>{winPosition}.</strong> osobą, która dzisiaj rozwiązała namedle!
             </p>
           )}
-          {(mode === "infinite" || mode === "infiniteQuote") && (
+          {mode === "dailyQuote" && quoteWinPosition > 0 && (
+            <p style={{ color: "#888", fontSize: "12px", margin: "0 0 16px" }}>
+              Jesteś <strong style={{ color: "#facc15" }}>{quoteWinPosition}.</strong> osobą, która dzisiaj rozwiązała cytat!
+            </p>
+          )}
+          {mode === "infinite" && (
             <button onClick={nextRound} className="btn btn-on">Następny →</button>
           )}
         </div>
@@ -902,6 +885,30 @@ export default function Namedle() {
       </div>
       <div style={{ position: "fixed", bottom: "12px", left: "14px", fontSize: "12px", color: "#fff", pointerEvents: "none" }}>
         made by czerwony :&gt;
+      </div>
+
+      <div style={{ position: "fixed", top: "52px", left: "14px", zIndex: 40 }}>
+        {serverConfirmed && userServer ? (
+          <span style={{ fontSize: "11px", fontWeight: 700, color: SERVER_META[userServer]?.color || "#fff", display: "flex", alignItems: "center", gap: "6px" }}>
+            {SERVER_META[userServer]?.label}
+            {(isAdmin || !serverResetUsed) && (
+              <button onClick={() => {
+                localStorage.removeItem("namedle_user_server");
+                setUserServer("");
+                setServerConfirmed(false);
+                if (discordUser) setUserServerFB(discordUser.id, "");
+                if (!isAdmin) {
+                  localStorage.setItem("namedle_server_reset_used", "1");
+                  setServerResetUsed(true);
+                }
+              }} style={{ background: "none", border: "none", color: "#444", fontSize: "10px", cursor: "pointer", padding: 0, lineHeight: 1 }} title="Zmień serwer">✕</button>
+            )}
+          </span>
+        ) : (
+          <button onClick={() => { setPendingServer(""); setShowServerPicker(true); }} className="btn btn-off">
+            Wybierz serwer
+          </button>
+        )}
       </div>
 
       <div style={{ position: "fixed", top: "14px", right: "14px", display: "flex", gap: "6px", zIndex: 40 }}>
@@ -933,56 +940,127 @@ export default function Namedle() {
         <>
           <div onClick={() => setShowLeaderboard(false)} style={{ position: "fixed", inset: 0, background: "#00000066", zIndex: 50 }} />
           <div style={{
-            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(340px, 90vw)",
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(480px, 95vw)",
             background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
-            zIndex: 51, overflowY: "auto", padding: "24px 20px",
+            zIndex: 51, overflowY: "auto", padding: "28px 24px",
             display: "flex", flexDirection: "column", gap: "12px",
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-              <h2 style={{ margin: 0, fontSize: "16px", fontWeight: 800, color: "#facc15" }}>Leaderboard</h2>
+              <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 800, color: "#facc15" }}>Leaderboard</h2>
               <button onClick={() => setShowLeaderboard(false)}
                 style={{ background: "none", border: "none", color: "#555", fontSize: "20px", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
             </div>
 
-            <div style={{ display: "flex", gap: "4px", marginBottom: "8px", flexWrap: "wrap" }}>
-              {[
-                { key: "dailyStreak", label: "Aktualna passa" },
-                { key: "maxDailyStreak", label: "Rekordowa passa" },
-                { key: "infiniteWins", label: "Nieskończony" },
-                { key: "quoteInfiniteWins", label: "Cytaty ∞" },
-              ].map((t) => (
-                <button key={t.key} onClick={() => switchLeaderboardTab(t.key)}
-                  className={`btn ${leaderboardTab === t.key ? "btn-on" : "btn-off"}`}
-                  style={{ fontSize: "11px", padding: "6px 10px" }}>{t.label}</button>
+            {/* Top-level category tabs */}
+            <div style={{ display: "flex", gap: "6px", marginBottom: "4px" }}>
+              {[{ key: "pojedyncze", label: "POJEDYNCZE" }, { key: "serwerowe", label: "SERWEROWE" }].map((c) => (
+                <button key={c.key} onClick={() => { setLeaderboardCategory(c.key); if (c.key === "pojedyncze") fetchLeaderboardTab(leaderboardTab); else getLeaderboard("wins").then(setLeaderboard); }}
+                  style={{
+                    flex: 1, padding: "8px", borderRadius: "8px", fontSize: "12px", fontWeight: 800,
+                    border: `1px solid ${leaderboardCategory === c.key ? "#7c3aed" : "#2a2a3a"}`,
+                    background: leaderboardCategory === c.key ? "#7c3aed22" : "#161620",
+                    color: leaderboardCategory === c.key ? "#c4b5fd" : "#555", cursor: "pointer",
+                    letterSpacing: "0.06em",
+                  }}>{c.label}</button>
               ))}
             </div>
 
-            {leaderboard.filter((e) => e[leaderboardTab] > 0).length === 0 && (
-              <p style={{ color: "#444", fontSize: "13px" }}>Brak danych.</p>
+            {leaderboardCategory === "pojedyncze" && (
+              <>
+                <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+                  {[
+                    { key: "dailyStreak", label: "Aktualna passa" },
+                    { key: "maxDailyStreak", label: "Rekordowa passa" },
+                    { key: "infiniteWins", label: "Nieskończony" },
+                  ].map((t) => (
+                    <button key={t.key} onClick={() => switchLeaderboardTab(t.key)}
+                      className={`btn ${leaderboardTab === t.key ? "btn-on" : "btn-off"}`}
+                      style={{ fontSize: "11px", padding: "6px 10px" }}>{t.label}</button>
+                  ))}
+                </div>
+                {leaderboard.filter((e) => e[leaderboardTab] > 0).length === 0 && (
+                  <p style={{ color: "#444", fontSize: "13px" }}>Brak danych.</p>
+                )}
+                {leaderboard.filter((e) => e[leaderboardTab] > 0).map((entry, idx) => {
+                  const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+                  const avatarUrl = entry.avatar
+                    ? `https://cdn.discordapp.com/avatars/${entry.id}/${entry.avatar}.png?size=64`
+                    : `https://cdn.discordapp.com/embed/avatars/0.png`;
+                  const sm = SERVER_META[entry.server];
+                  return (
+                    <div key={entry.id} style={{
+                      display: "flex", alignItems: "center", gap: "10px",
+                      padding: "10px 14px", background: idx < 3 ? "#161620" : "transparent", borderRadius: "8px",
+                    }}>
+                      <span style={{ width: "28px", textAlign: "center", fontSize: medal ? "18px" : "13px", color: "#555", fontWeight: 700, flexShrink: 0 }}>
+                        {medal || `#${idx + 1}`}
+                      </span>
+                      <img src={avatarUrl} alt="" style={{ width: 30, height: 30, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />
+                      <span style={{ fontSize: "13px", fontWeight: 600, color: "#ddd", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {entry.name}
+                      </span>
+                      {sm && (
+                        <span style={{ fontSize: "10px", fontWeight: 700, color: sm.color, background: sm.color + "18", borderRadius: "4px", padding: "2px 6px", flexShrink: 0 }}>
+                          {sm.label}
+                        </span>
+                      )}
+                      <span style={{ fontSize: "13px", fontWeight: 700, color: "#7c3aed", flexShrink: 0 }}>
+                        {entry[leaderboardTab]}
+                      </span>
+                    </div>
+                  );
+                })}
+              </>
             )}
-            {leaderboard.filter((e) => e[leaderboardTab] > 0).map((entry, idx) => {
-              const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
-              const avatarUrl = entry.avatar
-                ? `https://cdn.discordapp.com/avatars/${entry.id}/${entry.avatar}.png?size=64`
-                : `https://cdn.discordapp.com/embed/avatars/0.png`;
+
+            {leaderboardCategory === "serwerowe" && (() => {
+              const totals = Object.entries(SERVER_META).map(([key, meta]) => {
+                const members = leaderboard.filter((e) => e.server === key);
+                return {
+                  key, meta,
+                  totalWins: members.reduce((s, e) => s + e.wins, 0),
+                  members,
+                };
+              }).sort((a, b) => b.totalWins - a.totalWins);
               return (
-                <div key={entry.id} style={{
-                  display: "flex", alignItems: "center", gap: "10px",
-                  padding: "10px 12px", background: idx < 3 ? "#161620" : "transparent", borderRadius: "8px",
-                }}>
-                  <span style={{ width: "28px", textAlign: "center", fontSize: medal ? "18px" : "13px", color: "#555", fontWeight: 700, flexShrink: 0 }}>
-                    {medal || `#${idx + 1}`}
-                  </span>
-                  <img src={avatarUrl} alt="" style={{ width: 28, height: 28, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />
-                  <span style={{ fontSize: "13px", fontWeight: 600, color: "#ddd", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {entry.name}
-                  </span>
-                  <span style={{ fontSize: "13px", fontWeight: 700, color: "#7c3aed" }}>
-                    {entry[leaderboardTab]}
-                  </span>
+                <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                  {totals.map((srv, idx) => {
+                    const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : null;
+                    return (
+                      <div key={srv.key} style={{ borderRadius: "10px", border: `1px solid ${srv.meta.color}44`, overflow: "hidden" }}>
+                        <div style={{
+                          display: "flex", alignItems: "center", gap: "10px",
+                          padding: "12px 14px", background: srv.meta.color + "18",
+                        }}>
+                          <span style={{ fontSize: medal ? "20px" : "14px", flexShrink: 0 }}>{medal || `#${idx + 1}`}</span>
+                          <span style={{ fontSize: "14px", fontWeight: 800, color: srv.meta.color, flex: 1 }}>{srv.meta.label}</span>
+                          <span style={{ fontSize: "13px", fontWeight: 700, color: srv.meta.color }}>{srv.totalWins} wygranych</span>
+                        </div>
+                        {srv.members.length > 0 && (
+                          <div style={{ padding: "8px 14px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                            {srv.members.sort((a, b) => b.wins - a.wins).map((m) => {
+                              const avatarUrl = m.avatar
+                                ? `https://cdn.discordapp.com/avatars/${m.id}/${m.avatar}.png?size=32`
+                                : `https://cdn.discordapp.com/embed/avatars/0.png`;
+                              return (
+                                <div key={m.id} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                  <img src={avatarUrl} alt="" style={{ width: 22, height: 22, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />
+                                  <span style={{ fontSize: "12px", color: "#aaa", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                                  <span style={{ fontSize: "11px", color: "#555", flexShrink: 0 }}>{m.wins} wygranych</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {srv.members.length === 0 && (
+                          <div style={{ padding: "8px 14px", fontSize: "12px", color: "#333" }}>Brak graczy</div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               );
-            })}
+            })()}
           </div>
         </>
       )}
@@ -991,7 +1069,7 @@ export default function Namedle() {
         <>
           <div onClick={() => setShowStats(false)} style={{ position: "fixed", inset: 0, background: "#00000066", zIndex: 50 }} />
           <div style={{
-            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(320px, 90vw)",
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(460px, 95vw)",
             background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
             zIndex: 51, overflowY: "auto", padding: "24px 20px",
             display: "flex", flexDirection: "column", gap: "16px",
@@ -1010,7 +1088,7 @@ export default function Namedle() {
                     { label: "Aktualna passa", value: userStats.dailyStreak },
                     { label: "Rekordowa passa", value: userStats.maxDailyStreak },
                     { label: "Nieskończony", value: userStats.infiniteWins },
-                    { label: "Cytaty ∞", value: userStats.quoteInfiniteWins },
+
                     { label: "Razem wygrane", value: userStats.wins },
                   ].map((s) => (
                     <div key={s.label} style={{ background: "#161620", borderRadius: "8px", padding: "12px", textAlign: "center" }}>
@@ -1045,7 +1123,7 @@ export default function Namedle() {
         <>
           <div onClick={() => setShowAdmin(false)} style={{ position: "fixed", inset: 0, background: "#00000066", zIndex: 50 }} />
           <div style={{
-            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 90vw)",
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(520px, 95vw)",
             background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
             zIndex: 51, overflowY: "auto", padding: "24px 20px",
             display: "flex", flexDirection: "column", gap: "16px",
@@ -1068,6 +1146,9 @@ export default function Namedle() {
                 style={{ fontSize: "12px", padding: "6px 14px" }}>
                 Wnioski{proposals.length > 0 ? ` (${proposals.length})` : ""}
               </button>
+              <button onClick={() => setAdminSection("patchNotes")}
+                className={`btn ${adminSection === "patchNotes" ? "btn-on" : "btn-off"}`}
+                style={{ fontSize: "12px", padding: "6px 14px" }}>Patch Notes</button>
             </div>
 
             {adminSection === "friends" && (
@@ -1102,6 +1183,14 @@ export default function Namedle() {
                 </select>
                 <input placeholder="Rok urodzenia" value={adminForm.rokUrodzenia}
                   onChange={(e) => setAdminForm((f) => ({ ...f, rokUrodzenia: e.target.value }))} style={adminInputStyle} />
+                <select value={adminForm.server}
+                  onChange={(e) => setAdminForm((f) => ({ ...f, server: e.target.value }))} style={adminInputStyle}>
+                  <option value="">— Główny serwer —</option>
+                  <option value="noname">No Name</option>
+                  <option value="yesname">Yes Name</option>
+                  <option value="kropka">Kropka</option>
+                  <option value="kotomoto">Kotomoto</option>
+                </select>
 
                 <div style={{ display: "flex", gap: "8px" }}>
                   <button disabled={adminSubmitting || !adminForm.name} onClick={handleAdminSubmit}
@@ -1124,6 +1213,11 @@ export default function Namedle() {
                   }}>
                     {f.image && <img src={f.image} alt="" style={{ width: 24, height: 24, borderRadius: "50%", background: "#1a1a2a", flexShrink: 0 }} />}
                     <span style={{ fontSize: "13px", fontWeight: 600, color: "#ddd", flex: 1 }}>{f.name}</span>
+                    {f.server && SERVER_META[f.server] && (
+                      <span style={{ fontSize: "10px", fontWeight: 700, color: SERVER_META[f.server].color, background: SERVER_META[f.server].color + "18", borderRadius: "4px", padding: "2px 6px", flexShrink: 0 }}>
+                        {SERVER_META[f.server].label}
+                      </span>
+                    )}
                     <button onClick={() => startEdit(f)}
                       style={{ background: "none", border: "none", color: "#7c3aed", fontSize: "12px", cursor: "pointer", fontWeight: 600, padding: "2px 6px" }}>
                       Edytuj
@@ -1259,6 +1353,86 @@ export default function Namedle() {
                 })}
               </>
             )}
+
+            {adminSection === "patchNotes" && (
+              <>
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: 0 }}>
+                  {adminPatchEditing ? "Edytuj patch note" : "Dodaj patch note"}
+                </h3>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                    <input placeholder="Wersja (np. 2.1)" value={adminPatchForm.version}
+                      onChange={(e) => setAdminPatchForm((f) => ({ ...f, version: e.target.value }))}
+                      style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "8px 12px", color: "#ddd", fontFamily: "inherit", fontSize: "13px" }} />
+                    <input placeholder="Data (np. 06.03.2026)" value={adminPatchForm.date}
+                      onChange={(e) => setAdminPatchForm((f) => ({ ...f, date: e.target.value }))}
+                      style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "8px 12px", color: "#ddd", fontFamily: "inherit", fontSize: "13px" }} />
+                  </div>
+                  <input placeholder="URL obrazka (opcjonalnie)" value={adminPatchForm.image}
+                    onChange={(e) => setAdminPatchForm((f) => ({ ...f, image: e.target.value }))}
+                    style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "8px 12px", color: "#ddd", fontFamily: "inherit", fontSize: "13px" }} />
+                  <textarea placeholder="Zmiany (każda linia = osobna zmiana)" value={adminPatchForm.changes}
+                    onChange={(e) => setAdminPatchForm((f) => ({ ...f, changes: e.target.value }))}
+                    rows={5}
+                    style={{ background: "#161620", border: "1px solid #2a2a3a", borderRadius: "8px", padding: "8px 12px", color: "#ddd", fontFamily: "inherit", fontSize: "13px", resize: "vertical" }} />
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button disabled={adminSubmitting || !adminPatchForm.version || !adminPatchForm.changes.trim()} onClick={async () => {
+                      setAdminSubmitting(true);
+                      const data = {
+                        version: adminPatchForm.version.trim(),
+                        date: adminPatchForm.date.trim(),
+                        image: adminPatchForm.image.trim(),
+                        changes: adminPatchForm.changes.trim().split("\n").filter((l) => l.trim()),
+                        createdAt: adminPatchEditing ? (patchNotes.find((p) => p.id === adminPatchEditing)?.createdAt || Date.now()) : Date.now(),
+                      };
+                      if (adminPatchEditing) {
+                        await updatePatchNote(adminPatchEditing, data);
+                      } else {
+                        await addPatchNote(data);
+                      }
+                      setPatchNotes(await getAllPatchNotes());
+                      setAdminPatchForm({ version: "", date: "", image: "", changes: "" });
+                      setAdminPatchEditing(null);
+                      setAdminSubmitting(false);
+                    }} className="btn btn-on" style={{ flex: 1, fontSize: "12px", opacity: adminSubmitting ? 0.5 : 1 }}>
+                      {adminSubmitting ? "..." : adminPatchEditing ? "Zapisz zmiany" : "Dodaj"}
+                    </button>
+                    {adminPatchEditing && (
+                      <button onClick={() => { setAdminPatchEditing(null); setAdminPatchForm({ version: "", date: "", image: "", changes: "" }); }}
+                        className="btn btn-off" style={{ fontSize: "12px" }}>Anuluj</button>
+                    )}
+                  </div>
+                </div>
+
+                <h3 style={{ fontSize: "12px", color: "#555", fontWeight: 700, textTransform: "uppercase", margin: "8px 0 0" }}>
+                  Lista ({patchNotes.length})
+                </h3>
+                {patchNotes.map((p) => (
+                  <div key={p.id} style={{ padding: "10px 12px", background: "#161620", borderRadius: "10px", display: "flex", flexDirection: "column", gap: "6px" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: 700, fontSize: "13px", color: "#fff" }}>v{p.version} <span style={{ fontSize: "11px", color: "#444", fontWeight: 400 }}>{p.date}</span></span>
+                      <div style={{ display: "flex", gap: "6px" }}>
+                        <button onClick={() => {
+                          setAdminPatchEditing(p.id);
+                          setAdminPatchForm({ version: p.version, date: p.date || "", image: p.image || "", changes: (p.changes || []).join("\n") });
+                        }} style={{ background: "none", border: "none", color: "#3b82f6", fontSize: "11px", cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>edytuj</button>
+                        <button onClick={async () => {
+                          if (!confirm("Usunąć ten patch note?")) return;
+                          await deletePatchNote(p.id);
+                          setPatchNotes(await getAllPatchNotes());
+                        }} style={{ background: "none", border: "none", color: "#ef4444", fontSize: "11px", cursor: "pointer", fontFamily: "inherit", fontWeight: 700 }}>usuń</button>
+                      </div>
+                    </div>
+                    <ul style={{ margin: 0, paddingLeft: "16px" }}>
+                      {(p.changes || []).map((c, i) => (
+                        <li key={i} style={{ fontSize: "12px", color: "#888", lineHeight: 1.5 }}>{c}</li>
+                      ))}
+                    </ul>
+                    {p.image && <div style={{ fontSize: "11px", color: "#444" }}>📷 {p.image}</div>}
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         </>
       )}
@@ -1267,7 +1441,7 @@ export default function Namedle() {
         <>
           <div onClick={() => setShowProposal(false)} style={{ position: "fixed", inset: 0, background: "#00000066", zIndex: 50 }} />
           <div style={{
-            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(380px, 90vw)",
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(520px, 95vw)",
             background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
             zIndex: 51, overflowY: "auto", padding: "24px 20px",
             display: "flex", flexDirection: "column", gap: "16px",
@@ -1343,7 +1517,7 @@ export default function Namedle() {
                       <>
                         <input placeholder="Nick" value={proposalPersonForm.name}
                           onChange={(e) => setProposalPersonForm((f) => ({ ...f, name: e.target.value }))} style={adminInputStyle} />
-                        <input placeholder="URL zdjęcia (opcjonalnie)" value={proposalPersonForm.image}
+                        <input placeholder="dodaj tutaj ID na discordzie tej osoby. (zebym mogl dodac awatar)" value={proposalPersonForm.image}
                           onChange={(e) => setProposalPersonForm((f) => ({ ...f, image: e.target.value }))} style={adminInputStyle} />
                         <select value={proposalPersonForm.skill}
                           onChange={(e) => setProposalPersonForm((f) => ({ ...f, skill: e.target.value }))} style={adminInputStyle}>
@@ -1367,6 +1541,14 @@ export default function Namedle() {
                         </select>
                         <input placeholder="Rok urodzenia" value={proposalPersonForm.rokUrodzenia}
                           onChange={(e) => setProposalPersonForm((f) => ({ ...f, rokUrodzenia: e.target.value }))} style={adminInputStyle} />
+                        <select value={proposalPersonForm.server}
+                          onChange={(e) => setProposalPersonForm((f) => ({ ...f, server: e.target.value }))} style={adminInputStyle}>
+                          <option value="">— Główny serwer —</option>
+                          <option value="noname">No Name</option>
+                          <option value="yesname">Yes Name</option>
+                          <option value="kropka">Kropka</option>
+                          <option value="kotomoto">Kotomoto</option>
+                        </select>
                       </>
                     )}
                   </>
@@ -1435,7 +1617,7 @@ export default function Namedle() {
         <>
           <div onClick={() => setShowNotes(false)} style={{ position: "fixed", inset: 0, background: "#00000066", zIndex: 50 }} />
           <div style={{
-            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(320px, 90vw)",
+            position: "fixed", top: 0, right: 0, bottom: 0, width: "min(460px, 95vw)",
             background: "#0f0f16", borderLeft: "1px solid #1e1e2e",
             zIndex: 51, overflowY: "auto", padding: "24px 20px",
             display: "flex", flexDirection: "column", gap: "24px",
@@ -1445,7 +1627,7 @@ export default function Namedle() {
               <button onClick={() => setShowNotes(false)}
                 style={{ background: "none", border: "none", color: "#555", fontSize: "20px", cursor: "pointer", lineHeight: 1, padding: 0 }}>✕</button>
             </div>
-            {PATCH_NOTES.map((entry, idx) => (
+            {patchNotes.map((entry, idx) => (
               <div key={entry.version}>
                 {idx > 0 && <div style={{ height: "1px", background: "#1a1a2a", marginBottom: "24px" }} />}
                 <div style={{ display: "flex", gap: "8px", alignItems: "baseline", marginBottom: "8px" }}>
@@ -1465,6 +1647,47 @@ export default function Namedle() {
           </div>
         </>
       )}
+      {showServerPicker && (
+        <>
+          <div onClick={() => serverConfirmed && setShowServerPicker(false)}
+            style={{ position: "fixed", inset: 0, background: "#000000aa", zIndex: 100 }} />
+          <div style={{
+            position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+            background: "#0f0f16", border: "1px solid #2a2a3a", borderRadius: "12px",
+            padding: "28px 24px", zIndex: 101, width: "min(460px, 95vw)",
+            display: "flex", flexDirection: "column", gap: "16px", textAlign: "center",
+          }}>
+            <div>
+              <h3 style={{ margin: "0 0 4px", fontSize: "16px", fontWeight: 800, color: "#facc15" }}>Wybierz swój serwer</h3>
+              <p style={{ margin: 0, fontSize: "12px", color: "#555" }}>Wybór jest jednorazowy i nie można go zmienić.</p>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              {Object.entries(SERVER_META).map(([key, meta]) => (
+                <button key={key} onClick={() => setPendingServer(key)}
+                  style={{
+                    background: pendingServer === key ? meta.color + "22" : "#161620",
+                    border: `1px solid ${pendingServer === key ? meta.color : "#2a2a3a"}`,
+                    borderRadius: "8px", padding: "10px 16px", fontSize: "13px", fontWeight: 700,
+                    color: pendingServer === key ? meta.color : "#666", cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}>
+                  {meta.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={confirmServer} disabled={!pendingServer}
+              style={{
+                background: pendingServer ? "#7c3aed" : "#1a1a2a",
+                border: "none", borderRadius: "8px", padding: "10px 16px",
+                fontSize: "13px", fontWeight: 700, color: pendingServer ? "#fff" : "#333",
+                cursor: pendingServer ? "pointer" : "not-allowed", transition: "all 0.15s",
+              }}>
+              Potwierdź wybór
+            </button>
+          </div>
+        </>
+      )}
+
     </div>
   );
 }

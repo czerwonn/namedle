@@ -49,17 +49,19 @@ export async function getDailyPlayerCount(dateKey) {
 }
 
 export async function recordWin(dateKey, mode, discordUser) {
-  if (!db) return { globalWins: 0, dailyPosition: 0 };
-  const result = { globalWins: 0, dailyPosition: 0 };
-  const isDaily = mode === "daily" || mode === "dailyQuote";
+  if (!db) return { globalWins: 0, dailyPosition: 0, quoteDailyPosition: 0 };
+  const result = { globalWins: 0, dailyPosition: 0, quoteDailyPosition: 0 };
 
   try {
     const gTx = await runTransaction(ref(db, "globalWins"), (v) => (v || 0) + 1);
     result.globalWins = gTx.snapshot.val();
 
-    if (isDaily) {
+    if (mode === "daily") {
       const dTx = await runTransaction(ref(db, `dailyWins/${dateKey}`), (v) => (v || 0) + 1);
       result.dailyPosition = dTx.snapshot.val();
+    } else if (mode === "dailyQuote") {
+      const dTx = await runTransaction(ref(db, `dailyQuoteWins/${dateKey}`), (v) => (v || 0) + 1);
+      result.quoteDailyPosition = dTx.snapshot.val();
     }
 
     if (discordUser) {
@@ -93,6 +95,7 @@ export async function recordWin(dateKey, mode, discordUser) {
         return {
           name: discordUser.global_name || discordUser.username,
           avatar: discordUser.avatar,
+          server: existing.server || "",
           wins: totalWins,
           infiniteWins,
           quoteInfiniteWins,
@@ -121,6 +124,7 @@ export async function getLeaderboard(sortBy = "wins") {
         id,
         name: v.name,
         avatar: v.avatar,
+        server: v.server || "",
         wins: v.wins || 0,
         infiniteWins: v.infiniteWins || 0,
         quoteInfiniteWins: v.quoteInfiniteWins || 0,
@@ -147,6 +151,7 @@ export async function getUserStats(discordId) {
       maxDailyStreak: v.maxDailyStreak || 0,
       lastClassicDailyWinDate: v.lastClassicDailyWinDate || v.lastDailyWinDate || null,
       lastQuoteDailyWinDate: v.lastQuoteDailyWinDate || null,
+      server: v.server || "",
     };
   } catch {
     return null;
@@ -262,6 +267,63 @@ export async function addProposal(data) {
     return true;
   } catch (e) {
     console.error("addProposal error:", e);
+    return false;
+  }
+}
+
+export async function setUserServer(discordId, server) {
+  if (!db || !discordId) return false;
+  try {
+    await set(ref(db, `leaderboard/${discordId}/server`), server);
+    return true;
+  } catch (e) {
+    console.error("setUserServer error:", e);
+    return false;
+  }
+}
+
+export async function getAllPatchNotes() {
+  if (!db) return [];
+  try {
+    const snap = await get(ref(db, "patchNotes"));
+    const data = snap.val() || {};
+    return Object.entries(data)
+      .map(([id, v]) => ({ id, ...v }))
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  } catch {
+    return [];
+  }
+}
+
+export async function addPatchNote(data) {
+  if (!db) return false;
+  try {
+    await set(push(ref(db, "patchNotes")), data);
+    return true;
+  } catch (e) {
+    console.error("addPatchNote error:", e);
+    return false;
+  }
+}
+
+export async function updatePatchNote(id, data) {
+  if (!db) return false;
+  try {
+    await set(ref(db, `patchNotes/${id}`), data);
+    return true;
+  } catch (e) {
+    console.error("updatePatchNote error:", e);
+    return false;
+  }
+}
+
+export async function deletePatchNote(id) {
+  if (!db) return false;
+  try {
+    await remove(ref(db, `patchNotes/${id}`));
+    return true;
+  } catch (e) {
+    console.error("deletePatchNote error:", e);
     return false;
   }
 }
